@@ -1,6 +1,7 @@
 package main
 
 import (
+	"code.google.com/p/go-uuid/uuid"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -18,12 +19,15 @@ import (
 )
 
 var (
+	limit     = flag.Int("limit", 1000, "Query Limit")
+	insert  = flag.Bool("insert", false, "Insert Worker")
+	update  = flag.Bool("update", false, "Update Worker")
 	dbUrl = mustGetenv("DATABASE_URL")
 	db    = dbOpen()
 	urlRe = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
 	org   = mustGetenv("GITHUB_ORG")
 	auth  = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
-	wg        sync.WaitGroup
+	wg    sync.WaitGroup
 )
 
 type handler func(rc io.ReadCloser) error
@@ -69,14 +73,16 @@ func requester(url string, h handler) error {
 			return err
 		}
 
-		if err = h(resp.Body); err != nil {
-			return err
+		if remaining, reset, err := rateLimit(resp.Header); err != nil {
+			log.Fatal(err)
+		} else if remaining == 0 {
+			log.Printf("sleeping reset=%s\n", time.Unix(int64(reset), 0))
+			time.Sleep(time.Unix(int64(reset), 0).Sub(time.Now()))
+			continue
 		}
 
-		if remaining, reset, err := rateLimit(resp.Header); err != nil {
+		if err = h(resp.Body); err != nil {
 			return err
-		} else if remaining == 0 {
-			time.Sleep(time.Unix(int64(reset), 0).Sub(time.Now()))
 		}
 
 		url = nextUrl(resp.Header)
@@ -85,30 +91,105 @@ func requester(url string, h handler) error {
 	return nil
 }
 
-func shasHandler(repo, sha string) handler {
+func shasHandler(id string) handler {
 	return func(rc io.ReadCloser) error {
 		defer rc.Close()
 
 		var result struct {
-			Sha string
+			Commit struct {
+				Author struct {
+					Email string
+					Date string
+				}
+				Message string
+			}
+			Stats struct {
+				Additions int
+				Deletions int
+				Total int
+			}
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
 			return err
 		}
 
-		log.Println(result.Sha)
+		shasDbUpdate(id,
+			result.Commit.Author.Email,
+			result.Commit.Author.Date,
+			result.Commit.Message,
+			result.Stats.Additions,
+			result.Stats.Deletions,
+			result.Stats.Total)
 
 		return nil
 	}
 }
 
-func shas(repo, sha string) error {
+func shas(id, repo, sha string) {
 	log.Printf("repo=%s sha=%s\n", repo, sha)
-	return nil
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
-	err := requester(url, shasHandler(repo, sha))
-	return err
+	if err := requester(url, shasHandler(id)); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func shasDbUpdate(id, email, date, message string, additions, deletions, total int) {
+	rows, err := db.Query("UPDATE commits SET email=$2, date=$3, message=$4, additions=$5, deletions=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+}
+
+func shasDbQuery() bool {
+	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE total IS NULL LIMIT $1", *limit)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	next := false
+	for rows.Next() {
+		next = true
+		var id, repo, sha string
+		if err := rows.Scan(&id, &repo, &sha); err != nil {
+			log.Fatal(err)
+		}
+
+		wg.Add(1)
+		go func(i, r, s string) {
+			defer wg.Done()
+			shas(i, r, s)
+		}(id, repo, sha)
+	}
+
+	return next
+}
+
+func shasDbFind(repo, sha string) bool {
+	rows, err := db.Query("SELECT id FROM commits WHERE repo = $1 AND sha = $2", repo, sha)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	return rows.Next()
+}
+
+func shasDbCreate(repo, sha string) {
+	rows, err := db.Query("INSERT INTO commits (id, repo, sha) VALUES ($1, $2, $3)", uuid.New(), repo, sha)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+}
+
+func shasDb(repo, sha string) {
+	log.Printf("repo=%s sha=%s\n", repo, sha)
+	if !shasDbFind(repo, sha) {
+		shasDbCreate(repo, sha)
+	}
 }
 
 func commitsHandler(repo string) handler {
@@ -124,18 +205,19 @@ func commitsHandler(repo string) handler {
 		}
 
 		for _, c := range result {
-			shas(repo, c.Sha)
+			shasDb(repo, c.Sha)
 		}
 
 		return nil
 	}
 }
 
-func commits(repo string) error {
+func commits(repo string) {
 	log.Printf("repo=%s\n", repo)
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
-	err := requester(url, commitsHandler(repo))
-	return err
+	if err := requester(url, commitsHandler(repo)); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func reposHandler() handler {
@@ -152,9 +234,9 @@ func reposHandler() handler {
 
 		for _, r := range result {
 			wg.Add(1)
-			go func(repo string) {
+			go func(r string) {
 				defer wg.Done()
-				commits(repo)
+				commits(r)
 			}(r.Name)
 		}
 
@@ -162,10 +244,11 @@ func reposHandler() handler {
 	}
 }
 
-func repos() error {
+func repos() {
 	url := fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
-	err := requester(url, reposHandler())
-	return err
+	if err := requester(url, reposHandler()); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func main() {
@@ -174,7 +257,14 @@ func main() {
 
 	flag.Parse()
 
-	repos()
+	if *insert {
+		repos()
+	}
+
+	if *update {
+		for shasDbQuery() {
+		}
+	}
 
 	wg.Wait()
 }
