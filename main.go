@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,7 @@ var (
 	urlRe = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
 	org   = mustGetenv("GITHUB_ORG")
 	auth  = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
+	wg        sync.WaitGroup
 )
 
 type handler func(rc io.ReadCloser) error
@@ -149,7 +151,11 @@ func reposHandler() handler {
 		}
 
 		for _, r := range result {
-			commits(r.Name)
+			wg.Add(1)
+			go func(repo string) {
+				defer wg.Done()
+				commits(repo)
+			}(r.Name)
 		}
 
 		return nil
@@ -169,6 +175,8 @@ func main() {
 	flag.Parse()
 
 	repos()
+
+	wg.Wait()
 }
 
 func dbOpen() (db *sql.DB) {
