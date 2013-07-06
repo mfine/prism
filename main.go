@@ -19,7 +19,6 @@ import (
 
 var (
 	limit  = flag.Int("limit", 1000, "Query Limit")
-	setup  = flag.Bool("setup", false, "Setup Database")
 	insert = flag.Bool("insert", false, "Insert Worker")
 	update = flag.Bool("update", false, "Update Worker")
 	dbUrl  = mustGetenv("DATABASE_URL")
@@ -120,7 +119,7 @@ func shas(id string) handler {
 
 func dbQuery() {
 	for {
-		rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE total IS NULL LIMIT $1", *limit)
+		rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", *limit)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -214,18 +213,11 @@ func repos() handler {
 	}
 }
 
-func dbSetup() {
-}
-
 func main() {
 	log.SetFlags(log.Lshortfile)
 	log.SetPrefix("app=gitz ")
 
 	flag.Parse()
-
-	if *setup {
-		dbSetup()
-	}
 
 	if *insert {
 		wg.Add(1)
@@ -253,7 +245,7 @@ func dbOpen() (db *sql.DB) {
 		log.Fatal(err)
 	}
 
-	db, err = sql.Open("postgres", name)
+	db, err = sql.Open("postgres", name + " sslmode=disable")
 	if err != nil {
 		log.Fatal(err)
 	}
