@@ -85,6 +85,8 @@ func requester(url string, h handler) error {
 
 func shasHandler(repo, sha string) handler {
 	return func(rc io.ReadCloser) error {
+		defer rc.Close()
+
 		var result struct {
 			Sha string
 		}
@@ -100,6 +102,8 @@ func shasHandler(repo, sha string) handler {
 }
 
 func shas(repo, sha string) error {
+	log.Printf("repo=%s sha=%s\n", repo, sha)
+	return nil
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
 	err := requester(url, shasHandler(repo, sha))
 	return err
@@ -107,6 +111,8 @@ func shas(repo, sha string) error {
 
 func commitsHandler(repo string) handler {
 	return func(rc io.ReadCloser) error {
+		defer rc.Close()
+
 		var result []struct {
 			Sha string
 		}
@@ -124,6 +130,7 @@ func commitsHandler(repo string) handler {
 }
 
 func commits(repo string) error {
+	log.Printf("repo=%s\n", repo)
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
 	err := requester(url, commitsHandler(repo))
 	return err
@@ -131,6 +138,8 @@ func commits(repo string) error {
 
 func reposHandler() handler {
 	return func(rc io.ReadCloser) error {
+		defer rc.Close()
+
 		var result []struct {
 			Name string
 		}
