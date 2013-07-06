@@ -20,6 +20,7 @@ var (
 	dbUrl = mustGetenv("DATABASE_URL")
 	db    = dbOpen()
 	urlRe = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
+	org   = mustGetenv("GITHUB_ORG")
 	auth  = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
 )
 
@@ -81,7 +82,7 @@ func requester(url string, h handler) error {
 	return nil
 }
 
-func shasHandler(org, repo, sha string) handler {
+func shasHandler(repo, sha string) handler {
 	return func(rc io.ReadCloser) error {
 		var result struct {
 			Sha string
@@ -97,13 +98,13 @@ func shasHandler(org, repo, sha string) handler {
 	}
 }
 
-func shas(org, repo, sha string) error {
+func shas(repo, sha string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
-	err := requester(url, shasHandler(org, repo, sha))
+	err := requester(url, shasHandler(repo, sha))
 	return err
 }
 
-func commitsHandler(org, repo string) handler {
+func commitsHandler(repo string) handler {
 	return func(rc io.ReadCloser) error {
 		var result []struct {
 			Sha string
@@ -114,20 +115,20 @@ func commitsHandler(org, repo string) handler {
 		}
 
 		for _, c := range result {
-			shas(org, repo, c.Sha)
+			shas(repo, c.Sha)
 		}
 
 		return nil
 	}
 }
 
-func commits(org, repo string) error {
+func commits(repo string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
-	err := requester(url, commitsHandler(org, repo))
+	err := requester(url, commitsHandler(repo))
 	return err
 }
 
-func reposHandler(org string) handler {
+func reposHandler() handler {
 	return func(rc io.ReadCloser) error {
 		var result []struct {
 			Name string
@@ -138,16 +139,16 @@ func reposHandler(org string) handler {
 		}
 
 		for _, r := range result {
-			commits(org, r.Name)
+			commits(r.Name)
 		}
 
 		return nil
 	}
 }
 
-func repos(org string) error {
+func repos() error {
 	url := fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
-	err := requester(url, reposHandler(org))
+	err := requester(url, reposHandler())
 	return err
 }
 
@@ -157,7 +158,7 @@ func main() {
 
 	flag.Parse()
 
-	repos("heroku")
+	repos()
 }
 
 func dbOpen() (db *sql.DB) {
