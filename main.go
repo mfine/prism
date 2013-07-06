@@ -71,8 +71,9 @@ func requester(url string, h handler) error {
 			return err
 		}
 
-		remaining, reset, err := rateLimit(resp.Header)
-		if remaining == 0 {
+		if remaining, reset, err := rateLimit(resp.Header); err != nil {
+			return err
+		} else if remaining == 0 {
 			time.Sleep(time.Unix(int64(reset), 0).Sub(time.Now()))
 		}
 
