@@ -54,7 +54,7 @@ func rateLimit(hdr http.Header) bool {
 	}
 
 	if remaining == 0 {
-		log.Printf("reset=%s\n", time.Unix(int64(reset), 0))
+		log.Printf("fn=rateLimit reset=%v\n", time.Unix(int64(reset), 0))
 		time.Sleep(time.Unix(int64(reset), 0).Sub(time.Now()))
 		return true
 	}
@@ -143,7 +143,7 @@ func update(id, email, date, message string, additions, deletions, total int) {
 	}
 }
 
-func shasHandler(id string) handler {
+func shasHandler(repo, sha, id string) handler {
 	return func(rc io.ReadCloser) {
 		defer rc.Close()
 
@@ -166,6 +166,8 @@ func shasHandler(id string) handler {
 			log.Fatal(err)
 		}
 
+		log.Printf("fn=shasHandler repo=%v sha=%v id=%v\n", repo, sha, id)
+
 		update(id,
 			result.Commit.Author.Email,
 			result.Commit.Author.Date,
@@ -181,7 +183,7 @@ func shasUrl(repo, sha string) string {
 }
 
 func shas(repo, sha, id string) {
-	request(shasUrl(repo, sha), shasHandler(id))
+	request(shasUrl(repo, sha), shasHandler(repo, sha, id))
 }
 
 func commitsHandler(repo string) handler {
@@ -196,7 +198,7 @@ func commitsHandler(repo string) handler {
 		}
 
 		for _, c := range result {
-			log.Printf("repo=%v sha=%v\n", repo, c.Sha)
+			log.Printf("fn=commitsHandler repo=%v sha=%v\n", repo, c.Sha)
 			findOrCreate(repo, c.Sha)
 		}
 	}
@@ -223,7 +225,7 @@ func reposHandler(c chan<- func()) handler {
 		}
 
 		for _, r := range result {
-			log.Printf("repo=%v\n", r.Name)
+			log.Printf("fn=reposHandler repo=%v\n", r.Name)
 			if !ignore(r.Name) {
 				c <- func() { commits(r.Name) }
 			}
@@ -301,7 +303,7 @@ func dbOpen() (db *sql.DB) {
 
 func mustGetenv(key string) (value string) {
 	if value = os.Getenv(key); value == "" {
-		log.Fatalf("%s not set", key)
+		log.Fatalf("%v not set", key)
 	}
 
 	return
