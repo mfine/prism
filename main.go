@@ -117,6 +117,16 @@ func shas(id string) handler {
 	}
 }
 
+func dbIgnore(repo string) bool {
+	rows, err := db.Query("SELECT id FROM ignores WHERE repo = $1", repo)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	return rows.Next()
+}
+
 func dbQuery() (more bool) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", *limit)
 	if err != nil {
@@ -200,6 +210,10 @@ func repos() handler {
 		}
 
 		for _, r := range result {
+			if dbIgnore(r.Name) {
+				continue
+			}
+
 			wg.Add(1)
 			go func(repo string) {
 				defer wg.Done()
