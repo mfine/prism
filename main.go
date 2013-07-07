@@ -30,8 +30,11 @@ var (
 	wg     sync.WaitGroup
 )
 
+// CLEANUP
+
 type handler func(rc io.ReadCloser)
 
+// NO
 type up struct {
 	id string
 	repo string
@@ -237,7 +240,9 @@ func orgQuery(c chan<- string) {
 
 func inserter(c <-chan string) {
 	defer wg.Done()
+	// ^^^^^ how would this ever end?
 
+	// PASS a closure here?
 	for repo := range c {
 		log.Printf("repo=%s\n", repo)
 		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
@@ -247,13 +252,17 @@ func inserter(c <-chan string) {
 
 func updater(c <-chan *up) {
 	defer wg.Done()
+	// ^^^^^ how would this ever end?
 
+	// PASS a closure here?
 	for u := range c {
 		log.Printf("repo=%s sha=%s\n", u.repo, u.sha)
 		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, u.repo, u.sha)
 		request(url, shas(u.id))
 	}
 }
+
+// better naming scheme!!
 
 func main() {
 	log.SetFlags(log.Lshortfile)
@@ -262,6 +271,7 @@ func main() {
 	flag.Parse()
 
 	if *insert {
+		// common pattern
 		wg.Add(*workers+1)
 		c := make(chan string)
 		for i := 0; i < *workers; i++ {
