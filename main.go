@@ -95,25 +95,30 @@ func ignore(repo string) bool {
 	return rows.Next()
 }
 
-func query(c chan<- func(), limit int) (more bool) {
+func query(c chan<- func(), limit, delay int) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", limit)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer rows.Close()
 
+	more := false
 	for rows.Next() {
 		var id, repo, sha string
 		if err := rows.Scan(&id, &repo, &sha); err != nil {
 			log.Fatal(err)
 		}
 
-		c <- func() { shasWork(repo, sha, id) }
+		c <- func() { shas(repo, sha, id) }
 
 		more = true
 	}
 
-	return
+	if !more {
+		time.Sleep(time.Duration(delay) * time.Second)
+	}
+
+	c <- func() { query(c, limit, delay) }
 }
 
 func findOrCreate(repo, sha string) {
@@ -175,7 +180,7 @@ func shasUrl(repo, sha string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
 }
 
-func shasWork(repo, sha, id string) {
+func shas(repo, sha, id string) {
 	request(shasUrl(repo, sha), shasHandler(id))
 }
 
@@ -201,7 +206,7 @@ func commitsUrl(repo string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
 }
 
-func commitsWork(repo string) {
+func commits(repo string) {
 	request(commitsUrl(repo), commitsHandler(repo))
 }
 
@@ -220,7 +225,7 @@ func reposHandler(c chan<- func()) handler {
 		for _, r := range result {
 			log.Printf("repo=%v\n", r.Name)
 			if !ignore(r.Name) {
-				c <- func() { commitsWork(r.Name) }
+				c <- func() { commits(r.Name) }
 			}
 		}
 	}
@@ -230,8 +235,12 @@ func reposUrl() string {
 	return fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
 }
 
-func reposWork(c chan<- func()) {
+func repos(c chan<- func(), delay int) {
 	request(reposUrl(), reposHandler(c))
+
+	time.Sleep(time.Duration(delay) * time.Second)
+
+	c <- func() { repos(c, delay) }
 }
 
 func worker(c <-chan func()) {
@@ -259,25 +268,18 @@ func main() {
 	insert := flag.Bool("insert", false, "Insert Worker")
 	update := flag.Bool("update", false, "Update Worker")
 	limit := flag.Int("limit", 1000, "Query Limit")
+	delay := flag.Int("delay", 3600, "Delay")
 
 	flag.Parse()
 
 	c := workers(*scale)
 
 	if *insert {
-		c <- func() {
-			for {
-				reposWork(c)
-			}
-		}
+		c <- func() { repos(c, *delay) }
 	}
 
 	if *update {
-		c <- func() {
-			for {
-				for query(c, *limit) { }
-			}
-		}
+		c <- func() { query(c, *limit, *delay) }
 	}
 
 	wg.Wait()
