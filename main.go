@@ -96,8 +96,6 @@ func ignore(repo string) bool {
 }
 
 func query(c chan<- func(), limit int) (more bool) {
-	defer wg.Done()
-
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", limit)
 	if err != nil {
 		log.Fatal(err)
@@ -233,7 +231,6 @@ func reposUrl() string {
 }
 
 func reposWork(c chan<- func()) {
-	defer wg.Done()
 	request(reposUrl(), reposHandler(c))
 }
 
@@ -244,10 +241,10 @@ func worker(c <-chan func()) {
 	}
 }
 
-func work(count int) (c chan func()) {
-	c = make(chan func())
+func workers(count int, c <-chan func()) {
+	wg.Add(count)
 	for i := 0; i < count; i++ {
-		worker(c)
+		go worker(c)
 	}
 
 	return
@@ -257,7 +254,7 @@ func main() {
 	log.SetFlags(log.Lshortfile)
 	log.SetPrefix("app=gitz ")
 
-	workers := flag.Int("workers", 3, "Number of Workers")
+	scale := flag.Int("scale", 3, "Number of Workers")
 	insert := flag.Bool("insert", false, "Insert Worker")
 	update := flag.Bool("update", false, "Update Worker")
 	limit := flag.Int("limit", 1000, "Query Limit")
@@ -265,14 +262,14 @@ func main() {
 	flag.Parse()
 
 	if *insert {
-		wg.Add(*workers)
-		c := work(*workers)
+		c := make(chan func())
+		workers(*scale, c)
 		c <- func() { reposWork(c) }
 	}
 
 	if *update {
-		wg.Add(*workers)
-		c := work(*workers)
+		c := make(chan func())
+		workers(*scale, c)
 		c <- func() {
 			for query(c, *limit) {
 			}
