@@ -13,4 +13,4 @@ CREATE TABLE commits (
 );
 
 CREATE UNIQUE INDEX commits_on_repo_sha ON commits USING btree(repo, sha);
-CREATE UNIQUE INDEX commits_on_email ON commits USING btree(email);
+CREATE INDEX commits_on_email ON commits USING btree(email);

@@ -130,13 +130,10 @@ func dbQuery() (more bool) {
 			log.Fatal(err)
 		}
 
-		wg.Add(1)
-		go func(id, repo, sha string) {
-			defer wg.Done()
-			log.Printf("repo=%s sha=%s\n", repo, sha)
-			url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
-			request(url, shas(id))
-		}(id, repo, sha)
+		// worker pool
+		log.Printf("repo=%s sha=%s\n", repo, sha)
+		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
+		request(url, shas(id))
 
 		more = true
 	}
@@ -155,19 +152,16 @@ func dbFind(repo, sha string) bool {
 }
 
 func dbCreate(repo, sha string) {
-	rows, err := db.Query("INSERT INTO commits (repo, sha) VALUES ($1, $2)", repo, sha)
-	if err != nil {
+	if _, err := db.Exec("INSERT INTO commits (repo, sha) VALUES ($1, $2)", repo, sha); err != nil {
 		log.Fatal(err)
 	}
-	defer rows.Close()
 }
 
 func dbUpdate(id, email, date, message string, additions, deletions, total int) {
-	rows, err := db.Query("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total)
-	if err != nil {
+	log.Printf("id=%s email=%s date=%s message=%s additions=%v deletions=%v total=%v\n", id, email, date, message, additions, deletions, total)
+	if _, err := db.Exec("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total); err != nil {
 		log.Fatal(err)
 	}
-	defer rows.Close()
 }
 
 func commits(repo string) handler {
