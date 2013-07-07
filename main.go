@@ -241,7 +241,11 @@ func main() {
 	}
 
 	if *update {
-		for dbQuery() {}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for dbQuery() {}
+		}
 	}
 
 	wg.Wait()
