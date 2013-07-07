@@ -19,6 +19,7 @@ import (
 
 var (
 	limit  = flag.Int("limit", 1000, "Query Limit")
+	workers = flag.Int("workers", 3, "Number of Workers")
 	insert = flag.Bool("insert", false, "Insert Worker")
 	update = flag.Bool("update", false, "Update Worker")
 	dbUrl  = mustGetenv("DATABASE_URL")
@@ -30,6 +31,12 @@ var (
 )
 
 type handler func(rc io.ReadCloser)
+
+type up struct {
+	id string
+	repo string
+	sha string
+}
 
 func nextUrl(hdr http.Header) string {
 	for _, link := range hdr["Link"] {
@@ -127,7 +134,9 @@ func dbIgnore(repo string) bool {
 	return rows.Next()
 }
 
-func dbQuery() (more bool) {
+func dbQuery(c chan<- *up) (more bool) {
+	defer wg.Done()
+
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", *limit)
 	if err != nil {
 		log.Fatal(err)
@@ -141,9 +150,9 @@ func dbQuery() (more bool) {
 		}
 
 		// worker pool
-		log.Printf("repo=%s sha=%s\n", repo, sha)
-		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
-		request(url, shas(id))
+		u := up{id: id, repo: repo, sha: sha}
+		c <- &u
+		log.Println(u)
 
 		more = true
 	}
@@ -197,7 +206,7 @@ func commits(repo string) handler {
 	}
 }
 
-func repos() handler {
+func repos(c chan<- string) handler {
 	return func(rc io.ReadCloser) {
 		defer rc.Close()
 
@@ -214,14 +223,35 @@ func repos() handler {
 				continue
 			}
 
-			wg.Add(1)
-			go func(repo string) {
-				defer wg.Done()
-				log.Printf("repo=%s\n", repo)
-				url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
-				request(url, commits(repo))
-			}(r.Name)
+			c <- r.Name
 		}
+	}
+}
+
+func orgQuery(c chan<- string) {
+	defer wg.Done()
+
+	url := fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
+	request(url, repos(c))
+}
+
+func inserter(c <-chan string) {
+	defer wg.Done()
+
+	for repo := range c {
+		log.Printf("repo=%s\n", repo)
+		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
+		request(url, commits(repo))
+	}
+}
+
+func updater(c <-chan *up) {
+	defer wg.Done()
+
+	for u := range c {
+		log.Printf("repo=%s sha=%s\n", u.repo, u.sha)
+		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, u.repo, u.sha)
+		request(url, shas(u.id))
 	}
 }
 
@@ -232,20 +262,23 @@ func main() {
 	flag.Parse()
 
 	if *insert {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			url := fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
-			request(url, repos())
-		}()
+		wg.Add(*workers+1)
+		c := make(chan string)
+		for i := 0; i < *workers; i++ {
+			go inserter(c)
+		}
+
+		go orgQuery(c)
 	}
 
 	if *update {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for dbQuery() {}
+		wg.Add(*workers+1)
+		c := make(chan *up)
+		for i := 0; i < *workers; i++ {
+			go updater(c)
 		}
+
+		go dbQuery(c)
 	}
 
 	wg.Wait()
