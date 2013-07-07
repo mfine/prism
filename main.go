@@ -117,32 +117,31 @@ func shas(id string) handler {
 	}
 }
 
-func dbQuery() {
-	for {
-		rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", *limit)
-		if err != nil {
+func dbQuery() (more bool) {
+	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", *limit)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, repo, sha string
+		if err := rows.Scan(&id, &repo, &sha); err != nil {
 			log.Fatal(err)
 		}
 
-		if !rows.Next() {
-			break
-		}
+		wg.Add(1)
+		go func(id, repo, sha string) {
+			defer wg.Done()
+			log.Printf("repo=%s sha=%s\n", repo, sha)
+			url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
+			request(url, shas(id))
+		}(id, repo, sha)
 
-		for rows.Next() {
-			var id, repo, sha string
-			if err := rows.Scan(&id, &repo, &sha); err != nil {
-				log.Fatal(err)
-			}
-
-			wg.Add(1)
-			go func(id, repo, sha string) {
-				defer wg.Done()
-				log.Printf("repo=%s sha=%s\n", repo, sha)
-				url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
-				request(url, shas(id))
-			}(id, repo, sha)
-		}
+		more = true
 	}
+
+	return
 }
 
 func dbFind(repo, sha string) bool {
@@ -150,20 +149,25 @@ func dbFind(repo, sha string) bool {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer rows.Close()
 
 	return rows.Next()
 }
 
 func dbCreate(repo, sha string) {
-	if _, err := db.Query("INSERT INTO commits (repo, sha) VALUES ($1, $2)", repo, sha); err != nil {
+	rows, err := db.Query("INSERT INTO commits (repo, sha) VALUES ($1, $2)", repo, sha)
+	if err != nil {
 		log.Fatal(err)
 	}
+	defer rows.Close()
 }
 
 func dbUpdate(id, email, date, message string, additions, deletions, total int) {
-	if _, err := db.Query("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total); err != nil {
+	rows, err := db.Query("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total)
+	if err != nil {
 		log.Fatal(err)
 	}
+	defer rows.Close()
 }
 
 func commits(repo string) handler {
@@ -229,11 +233,7 @@ func main() {
 	}
 
 	if *update {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			dbQuery()
-		}()
+		for dbQuery() {}
 	}
 
 	wg.Wait()
