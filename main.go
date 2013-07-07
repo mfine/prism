@@ -257,21 +257,21 @@ func main() {
 	log.SetFlags(log.Lshortfile)
 	log.SetPrefix("app=gitz ")
 
-	flag.Parse()
-
 	workers := flag.Int("workers", 3, "Number of Workers")
 	insert := flag.Bool("insert", false, "Insert Worker")
 	update := flag.Bool("update", false, "Update Worker")
 	limit := flag.Int("limit", 1000, "Query Limit")
 
+	flag.Parse()
+
 	if *insert {
-		wg.Add(*workers + 1)
+		wg.Add(*workers)
 		c := work(*workers)
 		c <- func() { reposWork(c) }
 	}
 
 	if *update {
-		wg.Add(*workers + 1)
+		wg.Add(*workers)
 		c := work(*workers)
 		c <- func() {
 			for query(c, *limit) {
