@@ -241,7 +241,8 @@ func worker(c <-chan func()) {
 	}
 }
 
-func workers(count int, c <-chan func()) {
+func workers(count int) (c chan func()) {
+	c = make(chan func())
 	wg.Add(count)
 	for i := 0; i < count; i++ {
 		go worker(c)
@@ -261,17 +262,20 @@ func main() {
 
 	flag.Parse()
 
+	c := workers(*scale)
+
 	if *insert {
-		c := make(chan func())
-		workers(*scale, c)
-		c <- func() { reposWork(c) }
+		c <- func() {
+			for {
+				reposWork(c)
+			}
+		}
 	}
 
 	if *update {
-		c := make(chan func())
-		workers(*scale, c)
 		c <- func() {
-			for query(c, *limit) {
+			for {
+				for query(c, *limit) { }
 			}
 		}
 	}
