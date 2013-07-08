@@ -26,7 +26,7 @@ var (
 	wg    sync.WaitGroup
 )
 
-type handler func(rc io.ReadCloser)
+type handler func(io.ReadCloser)
 
 func nextUrl(hdr http.Header) string {
 	for _, link := range hdr["Link"] {
@@ -72,7 +72,13 @@ func request(url string, h handler) {
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("fn=request err=%v", err)
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			log.Printf("fn=request status=%v", resp.StatusCode)
+			continue
 		}
 
 		if rateLimit(resp.Header) {
@@ -163,7 +169,8 @@ func shasHandler(repo, sha, id string) handler {
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Fatal(err)
+			log.Printf("fn=shasHandler err=%v repo=%v sha=%v id=%v", err, repo, sha, id)
+			return
 		}
 
 		log.Printf("fn=shasHandler repo=%v sha=%v id=%v\n", repo, sha, id)
@@ -194,7 +201,8 @@ func commitsHandler(repo string) handler {
 			Sha string
 		}
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Fatal(err)
+			log.Printf("fn=commitsHandler err=%v repo=%v\n", err, repo)
+			return
 		}
 
 		for _, c := range result {
@@ -221,7 +229,8 @@ func reposHandler(c chan<- func()) handler {
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Fatal(err)
+			log.Printf("fn=reposHandler err=%v\n", err)
+			return
 		}
 
 		for _, r := range result {
