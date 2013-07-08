@@ -20,17 +20,16 @@ import (
 
 var (
 	inserter = flag.Bool("inserter", false, "Insert Worker")
-	updater = flag.Bool("updater", false, "Update Worker")
-	loop  = flag.Bool("loop", false, "Loop Worker")
-	limit = flag.Int("limit", 1000, "Query Limit")
-	scale = flag.Int("scale", 5, "Number of Workers")
-	delay = flag.Int("delay", 60, "Delay")
-	org   = flag.String("org", "heroku", "Organization")
-	ignore = flag.String("ignore", "", "Ignore Repos")
-
-	auth  = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
-	db    = dbOpen(mustGetenv("DATABASE_URL"))
-	urlRe = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
+	updater  = flag.Bool("updater", false, "Update Worker")
+	loop     = flag.Bool("loop", false, "Loop Worker")
+	limit    = flag.Int("limit", 1000, "Query Limit")
+	scale    = flag.Int("scale", 5, "Number of Workers")
+	delay    = flag.Int("delay", 60, "Delay")
+	org      = flag.String("org", "heroku", "Organization")
+	ignore   = flag.String("ignore", "", "Ignore Repos")
+	auth     = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
+	db       = dbOpen(mustGetenv("DATABASE_URL"))
+	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
 )
 
 type handler func(io.Reader)

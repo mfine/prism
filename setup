@@ -1,7 +1,6 @@
 heroku create
 heroku config:add \
   BUILDPACK_URL="https://github.com/kr/heroku-buildpack-go.git" \
-  GITHUB_ORG="${GITHUB_ORG}" \
   GITHUB_OAUTH_TOKEN="${GITHUB_OAUTH_TOKEN}"
 git push heroku master
 heroku addons:add heroku-postgresql:crane
