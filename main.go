@@ -144,14 +144,16 @@ func query(c chan<- func(), org string, limit, delay int, loop bool) {
 		more = true
 	}
 
-	if !more {
-		time.Sleep(time.Duration(delay) * time.Second)
-	}
-
-	if loop {
+	if more {
 		c <- func() { query(c, org, limit, delay, loop) }
 	} else {
-		close(c)
+		time.Sleep(time.Duration(delay) * time.Second)
+
+		if loop {
+			c <- func() { query(c, org, limit, delay, loop) }
+		} else {
+			close(c)
+		}
 	}
 }
 
