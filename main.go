@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/lib/pq"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -73,15 +74,19 @@ func request(url string, h handler) {
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			log.Printf("fn=request err=%v", err)
+			time.Sleep(3 * time.Second)
 			continue
 		}
 
 		if resp.StatusCode != 200 {
-			log.Printf("fn=request status=%v", resp.StatusCode)
+			body, _ := ioutil.ReadAll(resp.Body)
+			log.Printf("fn=request status=%v body=%q", resp.StatusCode, body)
+			time.Sleep(3 * time.Second)
 			continue
 		}
 
 		if rateLimit(resp.Header) {
+			time.Sleep(3 * time.Second)
 			continue
 		}
 
