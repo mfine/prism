@@ -216,6 +216,7 @@ func shas(repo, sha, id string) {
 	requests(shasUrl(repo, sha), shasHandler(repo, sha, id))
 }
 
+// commits request processing
 func commitsHandler(repo string) handler {
 	return func(rc io.ReadCloser) {
 		var result []struct {
@@ -226,6 +227,7 @@ func commitsHandler(repo string) handler {
 			return
 		}
 
+		// walk through shas, adding them to db if not present
 		for _, c := range result {
 			log.Printf("fn=commitsHandler repo=%v sha=%v\n", repo, c.Sha)
 			findOrCreate(repo, c.Sha)
@@ -237,10 +239,12 @@ func commitsUrl(repo string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
 }
 
+// list commits
 func commits(repo string) {
 	requests(commitsUrl(repo), commitsHandler(repo))
 }
 
+// repos request processing
 func reposHandler(c chan<- func()) handler {
 	return func(rc io.ReadCloser) {
 		var result []struct {
@@ -252,6 +256,7 @@ func reposHandler(c chan<- func()) handler {
 			return
 		}
 
+		// walk through repos, if not ignored add to worker
 		for _, r := range result {
 			log.Printf("fn=reposHandler repo=%v\n", r.Name)
 			if !ignore(r.Name) {
@@ -265,14 +270,17 @@ func reposUrl() string {
 	return fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
 }
 
+// list repos
 func repos(c chan<- func(), delay int) {
 	requests(reposUrl(), reposHandler(c))
 
 	time.Sleep(time.Duration(delay) * time.Second)
 
+	// tail call
 	c <- func() { repos(c, delay) }
 }
 
+// worker loops on func's to call
 func worker(c <-chan func()) {
 	defer wg.Done()
 	for w := range c {
@@ -280,6 +288,7 @@ func worker(c <-chan func()) {
 	}
 }
 
+// setup channel and workers
 func workers(count int) (c chan func()) {
 	c = make(chan func())
 	wg.Add(count)
@@ -302,13 +311,16 @@ func main() {
 
 	flag.Parse()
 
+	// setup the worker pool
 	c := workers(*scale)
 
 	if *insert {
+		// walk repos
 		c <- func() { repos(c, *delay) }
 	}
 
 	if *update {
+		// walk db
 		c <- func() { query(c, *limit, *delay) }
 	}
 
