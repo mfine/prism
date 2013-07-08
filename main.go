@@ -318,23 +318,19 @@ func main() {
 	insert := flag.Bool("insert", false, "Insert Worker")
 	update := flag.Bool("update", false, "Update Worker")
 	loop := flag.Bool("loop", false, "Loop Worker")
-
 	flag.Parse()
 
 	var wg sync.WaitGroup
-
 	if *insert {
 		// setup worker pool and walk repos
 		c := workers(&wg, *scale)
 		c <- func() { repos(c, *org, *delay, *loop) }
 	}
-
 	if *update {
 		// setup worker pool and walk db
 		c := workers(&wg, *scale)
 		c <- func() { query(c, *org, *limit, *delay, *loop) }
 	}
-
 	wg.Wait()
 }
 
