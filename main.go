@@ -63,54 +63,56 @@ func rateLimit(hdr http.Header) bool {
 	return false
 }
 
-func request(url string) (resp *http.Response, err error) {
+func rateCheck() bool {
+	req, err := http.NewRequest("GET", "https://api.github.com/rate_limit", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("Authorization", auth)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	return rateLimit(resp.Header)
+}
+
+func request(url string, h handler) string {
+	if rateCheck() {
+		return url
+	}
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 	req.Header.Set("Authorization", auth)
 
-	resp, err = http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("fn=request err=%v", err)
-		return
+		log.Fatal(err)
 	}
+	defer resp.Body.Close()
 
 	if rateLimit(resp.Header) {
-		err = fmt.Errorf("Rate Limited")
-		return
+		return url
 	}
 
 	if resp.StatusCode != 200 {
 		body, _ := ioutil.ReadAll(resp.Body)
-		log.Printf("fn=request status=%v body=%q", resp.StatusCode, body)
-		err = fmt.Errorf("Bad Status Code")
-		return
+		log.Fatalf("StatusCode=%v Body=%q", resp.StatusCode, body)
 	}
 
-	return
+	h(resp.Body)
+
+	return nextUrl(resp.Header)
 }
 
 func requests(url string, h handler) {
 	for url != "" {
-		resp, err := request("https://api.github.com/rate_limit")
-		if resp != nil {
-			resp.Body.Close()
-		}
-		if err != nil {
-			time.Sleep(3 * time.Second)
-			continue
-		}
-
-		resp, err = request(url)
-		if err != nil {
-			time.Sleep(3 * time.Second)
-			continue
-		}
-
-		h(resp.Body)
-
-		url = nextUrl(resp.Header)
+		url = request(url, h)
 	}
 }
 
@@ -174,8 +176,6 @@ func update(id, email, date, message string, additions, deletions, total int) {
 
 func shasHandler(repo, sha, id string) handler {
 	return func(rc io.ReadCloser) {
-		defer rc.Close()
-
 		var result struct {
 			Commit struct {
 				Message string
@@ -218,8 +218,6 @@ func shas(repo, sha, id string) {
 
 func commitsHandler(repo string) handler {
 	return func(rc io.ReadCloser) {
-		defer rc.Close()
-
 		var result []struct {
 			Sha string
 		}
@@ -245,8 +243,6 @@ func commits(repo string) {
 
 func reposHandler(c chan<- func()) handler {
 	return func(rc io.ReadCloser) {
-		defer rc.Close()
-
 		var result []struct {
 			Name string
 		}
