@@ -299,7 +299,7 @@ func main() {
 	insert := flag.Bool("insert", false, "Insert Worker")
 	update := flag.Bool("update", false, "Update Worker")
 	limit := flag.Int("limit", 1000, "Query Limit")
-	delay := flag.Int("delay", 3600, "Delay")
+	delay := flag.Int("delay", 60, "Delay")
 
 	flag.Parse()
 
