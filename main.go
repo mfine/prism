@@ -18,6 +18,7 @@ import (
 	"time"
 )
 
+// 2012-08-22T04:40:05Z
 var (
 	inserter = flag.Bool("inserter", false, "Insert Worker")
 	updater  = flag.Bool("updater", false, "Update Worker")
@@ -27,6 +28,8 @@ var (
 	delay    = flag.Int("delay", 60, "Delay")
 	org      = flag.String("org", "heroku", "Organization")
 	ignore   = flag.String("ignore", "", "Ignore Repos")
+	since    = flag.String("since", "", "Since Timestamp")
+	until    = flag.String("until", "", "Until Timestamp")
 	auth     = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
 	db       = dbOpen(mustGetenv("DATABASE_URL"))
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
@@ -236,8 +239,20 @@ func commitsHandler(repo string) handler {
 	}
 }
 
+func commitsUrlFormat() (url string) {
+	url = "https://api.github.com/repos/%s/%s/commits?"
+	if *since != "" {
+		url += fmt.Sprintf("since=%s&", *since)
+	}
+	if *until != "" {
+		url += fmt.Sprintf("until=%s", *until)
+	}
+
+	return
+}
+
 func commitsUrl(repo string) string {
-	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", *org, repo)
+	return fmt.Sprintf(commitsUrlFormat(), *org, repo)
 }
 
 // list commits
