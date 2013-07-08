@@ -113,16 +113,6 @@ func requests(url string, h handler) {
 	}
 }
 
-func ignore(org, repo string) bool {
-	rows, err := db.Query("SELECT id FROM ignores WHERE org=$1 AND repo=$2", org, repo)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer rows.Close()
-
-	return rows.Next()
-}
-
 func query(c chan<- func(), org string, limit, delay int, loop bool) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, limit)
 	if err != nil {
@@ -248,7 +238,7 @@ func commits(org, repo string) {
 }
 
 // repos request processing
-func reposHandler(c chan<- func(), org string) handler {
+func reposHandler(c chan<- func(), org string, ignored map[string]bool) handler {
 	return func(rc io.Reader) {
 		var result []struct {
 			Name string
@@ -262,7 +252,7 @@ func reposHandler(c chan<- func(), org string) handler {
 		// walk through repos, if not ignored add to worker
 		for _, r := range result {
 			log.Printf("fn=reposHandler org=%v repo=%v\n", org, r.Name)
-			if !ignore(org, r.Name) {
+			if !ignored[r.Name] {
 				c <- func() { commits(org, r.Name) }
 			}
 		}
@@ -274,13 +264,13 @@ func reposUrl(org string) string {
 }
 
 // list repos
-func repos(c chan<- func(), org string, delay int, loop bool) {
-	requests(reposUrl(org), reposHandler(c, org))
+func repos(c chan<- func(), org string, ignored map[string]bool, delay int, loop bool) {
+	requests(reposUrl(org), reposHandler(c, org, ignored))
 
 	time.Sleep(time.Duration(delay) * time.Second)
 
 	if loop {
-		c <- func() { repos(c, org, delay, loop) }
+		c <- func() { repos(c, org, ignored, delay, loop) }
 	} else {
 		close(c)
 	}
@@ -305,13 +295,12 @@ func workers(wg *sync.WaitGroup, count int) (c chan func()) {
 	return
 }
 
-//	wg    sync.WaitGroup
-
 func main() {
 	log.SetFlags(log.Lshortfile)
 	log.SetPrefix("app=prism ")
 
 	org := flag.String("org", "heroku", "Organization")
+	ignore := flag.String("ignore", "", "Ignore Repos")
 	scale := flag.Int("scale", 5, "Number of Workers")
 	limit := flag.Int("limit", 1000, "Query Limit")
 	delay := flag.Int("delay", 60, "Delay")
@@ -324,7 +313,7 @@ func main() {
 	if *insert {
 		// setup worker pool and walk repos
 		c := workers(&wg, *scale)
-		c <- func() { repos(c, *org, *delay, *loop) }
+		c <- func() { repos(c, *org, makeIgnored(*ignore), *delay, *loop) }
 	}
 	if *update {
 		// setup worker pool and walk db
@@ -346,6 +335,15 @@ func dbOpen(url string) (db *sql.DB) {
 	}
 
 	return
+}
+
+func makeIgnored(ignore string) map[string]bool {
+	m := make(map[string]bool)
+	for _, i := range strings.Split(ignore, ",") {
+		m[i] = true
+	}
+
+	return m
 }
 
 func mustGetenv(key string) (value string) {
