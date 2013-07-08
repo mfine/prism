@@ -311,16 +311,15 @@ func main() {
 
 	flag.Parse()
 
-	// setup the worker pool
-	c := workers(*scale)
-
 	if *insert {
-		// walk repos
+		// setup worker pool and walk repos
+		c := workers(*scale)
 		c <- func() { repos(c, *org, *delay) }
 	}
 
 	if *update {
-		// walk db
+		// setup worker pool and walk db
+		c := workers(*scale)
 		c <- func() { query(c, *org, *limit, *delay) }
 	}
 
