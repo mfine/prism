@@ -63,24 +63,45 @@ func rateLimit(hdr http.Header) bool {
 	return false
 }
 
-func request(url string, h handler) {
-	for url != "" {
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			log.Fatal(err)
-		}
-		req.Header.Set("Authorization", auth)
+//"https://api.github.com/rate_limit"
+func request(url string) (resp *http.Response, err error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("Authorization", auth)
 
-		resp, err := http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("fn=request err=%v", err)
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := ioutil.ReadAll(resp.Body)
+		log.Printf("fn=request status=%v body=%q", resp.StatusCode, body)
+		err = fmt.Errorf("Bad StatusCode")
+		return
+	}
+
+	return
+}
+
+func requests(url string, h handler) {
+	for url != "" {
+		resp, err := request("https://api.github.com/rate_limit")
 		if err != nil {
-			log.Printf("fn=request err=%v", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		if resp.StatusCode != 200 {
-			body, _ := ioutil.ReadAll(resp.Body)
-			log.Printf("fn=request status=%v body=%q", resp.StatusCode, body)
+		if rateLimit(resp.Header) {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+
+		resp, err = request(url)
+		if err != nil {
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -195,7 +216,7 @@ func shasUrl(repo, sha string) string {
 }
 
 func shas(repo, sha, id string) {
-	request(shasUrl(repo, sha), shasHandler(repo, sha, id))
+	requests(shasUrl(repo, sha), shasHandler(repo, sha, id))
 }
 
 func commitsHandler(repo string) handler {
@@ -222,7 +243,7 @@ func commitsUrl(repo string) string {
 }
 
 func commits(repo string) {
-	request(commitsUrl(repo), commitsHandler(repo))
+	requests(commitsUrl(repo), commitsHandler(repo))
 }
 
 func reposHandler(c chan<- func()) handler {
@@ -252,7 +273,7 @@ func reposUrl() string {
 }
 
 func repos(c chan<- func(), delay int) {
-	request(reposUrl(), reposHandler(c))
+	requests(reposUrl(), reposHandler(c))
 
 	time.Sleep(time.Duration(delay) * time.Second)
 
