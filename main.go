@@ -125,7 +125,7 @@ func ignore(org, repo string) bool {
 	return rows.Next()
 }
 
-func query(c chan<- func(), org string, limit, delay int) {
+func query(c chan<- func(), org string, limit, delay int, loop bool) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, limit)
 	if err != nil {
 		log.Fatal(err)
@@ -148,7 +148,11 @@ func query(c chan<- func(), org string, limit, delay int) {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 
-	c <- func() { query(c, org, limit, delay) }
+	if loop {
+		c <- func() { query(c, org, limit, delay, loop) }
+	} else {
+		close(c)
+	}
 }
 
 func findOrCreate(org, repo, sha string) {
@@ -270,13 +274,16 @@ func reposUrl(org string) string {
 }
 
 // list repos
-func repos(c chan<- func(), org string, delay int) {
+func repos(c chan<- func(), org string, delay int, loop bool) {
 	requests(reposUrl(org), reposHandler(c, org))
 
 	time.Sleep(time.Duration(delay) * time.Second)
 
-	// tail call
-	c <- func() { repos(c, org, delay) }
+	if loop {
+		c <- func() { repos(c, org, delay, loop) }
+	} else {
+		close(c)
+	}
 }
 
 // worker loops on func's to call
@@ -304,23 +311,24 @@ func main() {
 
 	org := flag.String("org", "heroku", "Organization")
 	scale := flag.Int("scale", 5, "Number of Workers")
-	insert := flag.Bool("insert", false, "Insert Worker")
-	update := flag.Bool("update", false, "Update Worker")
 	limit := flag.Int("limit", 1000, "Query Limit")
 	delay := flag.Int("delay", 60, "Delay")
+	insert := flag.Bool("insert", false, "Insert Worker")
+	update := flag.Bool("update", false, "Update Worker")
+	loop := flag.Bool("loop", false, "Loop Worker")
 
 	flag.Parse()
 
 	if *insert {
 		// setup worker pool and walk repos
 		c := workers(*scale)
-		c <- func() { repos(c, *org, *delay) }
+		c <- func() { repos(c, *org, *delay, *loop) }
 	}
 
 	if *update {
 		// setup worker pool and walk db
 		c := workers(*scale)
-		c <- func() { query(c, *org, *limit, *delay) }
+		c <- func() { query(c, *org, *limit, *delay, *loop) }
 	}
 
 	wg.Wait()
