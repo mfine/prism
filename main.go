@@ -63,7 +63,6 @@ func rateLimit(hdr http.Header) bool {
 	return false
 }
 
-//"https://api.github.com/rate_limit"
 func request(url string) (resp *http.Response, err error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -77,10 +76,15 @@ func request(url string) (resp *http.Response, err error) {
 		return
 	}
 
+	if rateLimit(resp.Header) {
+		err = fmt.Errorf("Rate Limited")
+		return
+	}
+
 	if resp.StatusCode != 200 {
 		body, _ := ioutil.ReadAll(resp.Body)
 		log.Printf("fn=request status=%v body=%q", resp.StatusCode, body)
-		err = fmt.Errorf("Bad StatusCode")
+		err = fmt.Errorf("Bad Status Code")
 		return
 	}
 
@@ -95,18 +99,8 @@ func requests(url string, h handler) {
 			continue
 		}
 
-		if rateLimit(resp.Header) {
-			time.Sleep(3 * time.Second)
-			continue
-		}
-
 		resp, err = request(url)
 		if err != nil {
-			time.Sleep(3 * time.Second)
-			continue
-		}
-
-		if rateLimit(resp.Header) {
 			time.Sleep(3 * time.Second)
 			continue
 		}
