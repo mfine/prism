@@ -19,7 +19,6 @@ import (
 )
 
 var (
-	org   = mustGetenv("GITHUB_ORG")
 	auth  = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
 	dbUrl = mustGetenv("DATABASE_URL")
 	db    = dbOpen()
@@ -27,7 +26,7 @@ var (
 	wg    sync.WaitGroup
 )
 
-type handler func(io.ReadCloser)
+type handler func(io.Reader)
 
 func nextUrl(hdr http.Header) string {
 	for _, link := range hdr["Link"] {
@@ -116,8 +115,8 @@ func requests(url string, h handler) {
 	}
 }
 
-func ignore(repo string) bool {
-	rows, err := db.Query("SELECT id FROM ignores WHERE repo = $1", repo)
+func ignore(org, repo string) bool {
+	rows, err := db.Query("SELECT id FROM ignores WHERE org=$1 AND repo=$2", org, repo)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -126,8 +125,8 @@ func ignore(repo string) bool {
 	return rows.Next()
 }
 
-func query(c chan<- func(), limit, delay int) {
-	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE email IS NULL LIMIT $1", limit)
+func query(c chan<- func(), org string, limit, delay int) {
+	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, limit)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -140,7 +139,7 @@ func query(c chan<- func(), limit, delay int) {
 			log.Fatal(err)
 		}
 
-		c <- func() { shas(repo, sha, id) }
+		c <- func() { shas(org, repo, sha, id) }
 
 		more = true
 	}
@@ -149,11 +148,11 @@ func query(c chan<- func(), limit, delay int) {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 
-	c <- func() { query(c, limit, delay) }
+	c <- func() { query(c, org, limit, delay) }
 }
 
-func findOrCreate(repo, sha string) {
-	rows, err := db.Query("SELECT id FROM commits WHERE repo = $1 AND sha = $2", repo, sha)
+func findOrCreate(org, repo, sha string) {
+	rows, err := db.Query("SELECT id FROM commits WHERE org=$1 AND repo=$2 AND sha=$3", org, repo, sha)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -163,7 +162,7 @@ func findOrCreate(repo, sha string) {
 		return
 	}
 
-	if _, err := db.Exec("INSERT INTO commits (repo, sha) VALUES ($1, $2)", repo, sha); err != nil {
+	if _, err := db.Exec("INSERT INTO commits (org, repo, sha) VALUES ($1, $2, $3)", org, repo, sha); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -174,8 +173,8 @@ func update(id, email, date, message string, additions, deletions, total int) {
 	}
 }
 
-func shasHandler(repo, sha, id string) handler {
-	return func(rc io.ReadCloser) {
+func shasHandler(org, repo, sha, id string) handler {
+	return func(rc io.Reader) {
 		var result struct {
 			Commit struct {
 				Message string
@@ -192,11 +191,11 @@ func shasHandler(repo, sha, id string) handler {
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=shasHandler err=%v repo=%v sha=%v id=%v", err, repo, sha, id)
+			log.Printf("fn=shasHandler err=%v org=%v repo=%v sha=%v id=%v", err, org, repo, sha, id)
 			return
 		}
 
-		log.Printf("fn=shasHandler repo=%v sha=%v id=%v\n", repo, sha, id)
+		log.Printf("fn=shasHandler org=%v repo=%v sha=%v id=%v\n", org, repo, sha, id)
 
 		update(id,
 			result.Commit.Author.Email,
@@ -208,76 +207,76 @@ func shasHandler(repo, sha, id string) handler {
 	}
 }
 
-func shasUrl(repo, sha string) string {
+func shasUrl(org, repo, sha string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
 }
 
-func shas(repo, sha, id string) {
-	requests(shasUrl(repo, sha), shasHandler(repo, sha, id))
+func shas(org, repo, sha, id string) {
+	requests(shasUrl(org, repo, sha), shasHandler(org, repo, sha, id))
 }
 
 // commits request processing
-func commitsHandler(repo string) handler {
-	return func(rc io.ReadCloser) {
+func commitsHandler(org, repo string) handler {
+	return func(rc io.Reader) {
 		var result []struct {
 			Sha string
 		}
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=commitsHandler err=%v repo=%v\n", err, repo)
+			log.Printf("fn=commitsHandler err=%v org=%v repo=%v\n", err, org, repo)
 			return
 		}
 
 		// walk through shas, adding them to db if not present
 		for _, c := range result {
-			log.Printf("fn=commitsHandler repo=%v sha=%v\n", repo, c.Sha)
-			findOrCreate(repo, c.Sha)
+			log.Printf("fn=commitsHandler org=%v repo=%v sha=%v\n", org, repo, c.Sha)
+			findOrCreate(org, repo, c.Sha)
 		}
 	}
 }
 
-func commitsUrl(repo string) string {
+func commitsUrl(org, repo string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", org, repo)
 }
 
 // list commits
-func commits(repo string) {
-	requests(commitsUrl(repo), commitsHandler(repo))
+func commits(org, repo string) {
+	requests(commitsUrl(org, repo), commitsHandler(org, repo))
 }
 
 // repos request processing
-func reposHandler(c chan<- func()) handler {
-	return func(rc io.ReadCloser) {
+func reposHandler(c chan<- func(), org string) handler {
+	return func(rc io.Reader) {
 		var result []struct {
 			Name string
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=reposHandler err=%v\n", err)
+			log.Printf("fn=reposHandler err=%v org=%v\n", err, org)
 			return
 		}
 
 		// walk through repos, if not ignored add to worker
 		for _, r := range result {
-			log.Printf("fn=reposHandler repo=%v\n", r.Name)
-			if !ignore(r.Name) {
-				c <- func() { commits(r.Name) }
+			log.Printf("fn=reposHandler org=%v repo=%v\n", org, r.Name)
+			if !ignore(org, r.Name) {
+				c <- func() { commits(org, r.Name) }
 			}
 		}
 	}
 }
 
-func reposUrl() string {
+func reposUrl(org string) string {
 	return fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
 }
 
 // list repos
-func repos(c chan<- func(), delay int) {
-	requests(reposUrl(), reposHandler(c))
+func repos(c chan<- func(), org string, delay int) {
+	requests(reposUrl(org), reposHandler(c, org))
 
 	time.Sleep(time.Duration(delay) * time.Second)
 
 	// tail call
-	c <- func() { repos(c, delay) }
+	c <- func() { repos(c, org, delay) }
 }
 
 // worker loops on func's to call
@@ -303,6 +302,7 @@ func main() {
 	log.SetFlags(log.Lshortfile)
 	log.SetPrefix("app=prism ")
 
+	org := flag.String("org", "heroku", "Organization")
 	scale := flag.Int("scale", 5, "Number of Workers")
 	insert := flag.Bool("insert", false, "Insert Worker")
 	update := flag.Bool("update", false, "Update Worker")
@@ -316,12 +316,12 @@ func main() {
 
 	if *insert {
 		// walk repos
-		c <- func() { repos(c, *delay) }
+		c <- func() { repos(c, *org, *delay) }
 	}
 
 	if *update {
 		// walk db
-		c <- func() { query(c, *limit, *delay) }
+		c <- func() { query(c, *org, *limit, *delay) }
 	}
 
 	wg.Wait()
