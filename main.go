@@ -20,7 +20,6 @@ import (
 
 var (
 	auth  = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
-	dbUrl = mustGetenv("DATABASE_URL")
 	db    = dbOpen()
 	urlRe = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
 )
@@ -340,7 +339,7 @@ func main() {
 }
 
 func dbOpen() (db *sql.DB) {
-	name, err := pq.ParseURL(dbUrl)
+	name, err := pq.ParseURL(mustGetenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
 	}
