@@ -94,6 +94,9 @@ func request(url string) (resp *http.Response, err error) {
 func requests(url string, h handler) {
 	for url != "" {
 		resp, err := request("https://api.github.com/rate_limit")
+		if resp != nil {
+			resp.Body.Close()
+		}
 		if err != nil {
 			time.Sleep(3 * time.Second)
 			continue
