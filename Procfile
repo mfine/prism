@@ -1,3 +1,3 @@
-insert: prism --org heroku --insert --loop --ignore otp,redistogo
-update: prism --org heroku --update --loop
-main:   prism --org heroku --insert --update --loop --ignore otp,redistogo
+insert: prism --org heroku --inserter --loop --ignore otp,redistogo
+update: prism --org heroku --updater --loop
+main:   prism --org heroku --inserter --updater --loop --ignore otp,redistogo

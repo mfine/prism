@@ -19,9 +19,17 @@ import (
 )
 
 var (
+	inserter = flag.Bool("inserter", false, "Insert Worker")
+	updater = flag.Bool("updater", false, "Update Worker")
+	loop  = flag.Bool("loop", false, "Loop Worker")
+	limit = flag.Int("limit", 1000, "Query Limit")
+	scale = flag.Int("scale", 5, "Number of Workers")
+	delay = flag.Int("delay", 60, "Delay")
+	org   = flag.String("org", "heroku", "Organization")
+	ignore = flag.String("ignore", "", "Ignore Repos")
+
 	auth  = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
 	db    = dbOpen(mustGetenv("DATABASE_URL"))
-	org   = flag.String("org", "heroku", "Organization")
 	urlRe = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
 )
 
@@ -114,8 +122,8 @@ func requests(url string, h handler) {
 	}
 }
 
-func query(c chan<- func(), limit, delay int, loop bool) {
-	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", *org, limit)
+func query(c chan<- func()) {
+	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", *org, *limit)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -134,12 +142,12 @@ func query(c chan<- func(), limit, delay int, loop bool) {
 	}
 
 	if more {
-		c <- func() { query(c, limit, delay, loop) }
+		c <- func() { query(c) }
 	} else {
-		time.Sleep(time.Duration(delay) * time.Second)
+		time.Sleep(time.Duration(*delay) * time.Second)
 
-		if loop {
-			c <- func() { query(c, limit, delay, loop) }
+		if *loop {
+			c <- func() { query(c) }
 		} else {
 			close(c)
 		}
@@ -265,13 +273,13 @@ func reposUrl() string {
 }
 
 // list repos
-func repos(c chan<- func(), ignored map[string]bool, delay int, loop bool) {
+func repos(c chan<- func(), ignored map[string]bool) {
 	requests(reposUrl(), reposHandler(c, ignored))
 
-	time.Sleep(time.Duration(delay) * time.Second)
+	time.Sleep(time.Duration(*delay) * time.Second)
 
-	if loop {
-		c <- func() { repos(c, ignored, delay, loop) }
+	if *loop {
+		c <- func() { repos(c, ignored) }
 	} else {
 		close(c)
 	}
@@ -286,10 +294,10 @@ func worker(wg *sync.WaitGroup, c <-chan func()) {
 }
 
 // setup channel and workers
-func workers(wg *sync.WaitGroup, count int) (c chan func()) {
+func workers(wg *sync.WaitGroup) (c chan func()) {
 	c = make(chan func())
-	wg.Add(count)
-	for i := 0; i < count; i++ {
+	wg.Add(*scale)
+	for i := 0; i < *scale; i++ {
 		go worker(wg, c)
 	}
 
@@ -300,26 +308,18 @@ func main() {
 	log.SetFlags(log.Lshortfile)
 	log.SetPrefix("app=prism ")
 
-	ignore := flag.String("ignore", "", "Ignore Repos")
-	scale := flag.Int("scale", 5, "Number of Workers")
-	limit := flag.Int("limit", 1000, "Query Limit")
-	delay := flag.Int("delay", 60, "Delay")
-	insert := flag.Bool("insert", false, "Insert Worker")
-	update := flag.Bool("update", false, "Update Worker")
-	loop := flag.Bool("loop", false, "Loop Worker")
-
 	flag.Parse()
 
 	var wg sync.WaitGroup
-	if *insert {
+	if *inserter {
 		// setup worker pool and walk repos
-		c := workers(&wg, *scale)
-		c <- func() { repos(c, makeIgnored(*ignore), *delay, *loop) }
+		c := workers(&wg)
+		c <- func() { repos(c, makeIgnored(*ignore)) }
 	}
-	if *update {
+	if *updater {
 		// setup worker pool and walk db
-		c := workers(&wg, *scale)
-		c <- func() { query(c, *limit, *delay, *loop) }
+		c := workers(&wg)
+		c <- func() { query(c) }
 	}
 	wg.Wait()
 }
