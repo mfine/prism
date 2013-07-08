@@ -23,7 +23,6 @@ var (
 	dbUrl = mustGetenv("DATABASE_URL")
 	db    = dbOpen()
 	urlRe = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
-	wg    sync.WaitGroup
 )
 
 type handler func(io.Reader)
@@ -289,7 +288,7 @@ func repos(c chan<- func(), org string, delay int, loop bool) {
 }
 
 // worker loops on func's to call
-func worker(c <-chan func()) {
+func worker(wg *sync.WaitGroup, c <-chan func()) {
 	defer wg.Done()
 	for w := range c {
 		w()
@@ -297,15 +296,17 @@ func worker(c <-chan func()) {
 }
 
 // setup channel and workers
-func workers(count int) (c chan func()) {
+func workers(wg *sync.WaitGroup, count int) (c chan func()) {
 	c = make(chan func())
 	wg.Add(count)
 	for i := 0; i < count; i++ {
-		go worker(c)
+		go worker(wg, c)
 	}
 
 	return
 }
+
+//	wg    sync.WaitGroup
 
 func main() {
 	log.SetFlags(log.Lshortfile)
@@ -321,15 +322,17 @@ func main() {
 
 	flag.Parse()
 
+	var wg sync.WaitGroup
+
 	if *insert {
 		// setup worker pool and walk repos
-		c := workers(*scale)
+		c := workers(&wg, *scale)
 		c <- func() { repos(c, *org, *delay, *loop) }
 	}
 
 	if *update {
 		// setup worker pool and walk db
-		c := workers(*scale)
+		c := workers(&wg, *scale)
 		c <- func() { query(c, *org, *limit, *delay, *loop) }
 	}
 
