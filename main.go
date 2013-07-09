@@ -27,16 +27,15 @@ var (
 	limit    = flag.Int("limit", 1000, "Query Limit")
 	scale    = flag.Int("scale", 5, "Number of Workers")
 	delay    = flag.Int("delay", 60, "Delay")
-	org      = flag.String("org", "heroku", "Organization")
-	ignore   = flag.String("ignore", "", "Ignore Repos")
 	since    = flag.String("since", "", "Since Timestamp")
 	until    = flag.String("until", "", "Until Timestamp")
-	auth     = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
+	org      = mustGetenv("ORG")
+	ignores  = makeIgnored(mustGetenv("IGNORE_REPOS"))
+	auth     = "token " + mustGetenv("OAUTH_TOKEN")
 	db       = dbOpen(mustGetenv("DATABASE_URL"))
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
+	next     = timeNow()
 	now      string
-	next     string
-	ignores  map[string]bool
 	wg       sync.WaitGroup
 )
 
@@ -138,7 +137,7 @@ func requests(url string, h handler) {
 }
 
 func query(c chan<- func()) {
-	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", *org, *limit)
+	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, *limit)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -171,7 +170,7 @@ func query(c chan<- func()) {
 }
 
 func findOrCreate(repo, sha string) {
-	rows, err := db.Query("SELECT id FROM commits WHERE org=$1 AND repo=$2 AND sha=$3", *org, repo, sha)
+	rows, err := db.Query("SELECT id FROM commits WHERE org=$1 AND repo=$2 AND sha=$3", org, repo, sha)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -181,7 +180,7 @@ func findOrCreate(repo, sha string) {
 		return
 	}
 
-	if _, err := db.Exec("INSERT INTO commits (org, repo, sha) VALUES ($1, $2, $3)", *org, repo, sha); err != nil {
+	if _, err := db.Exec("INSERT INTO commits (org, repo, sha) VALUES ($1, $2, $3)", org, repo, sha); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -210,11 +209,11 @@ func shasHandler(repo, sha, id string) handler {
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=shasHandler err=%v org=%v repo=%v sha=%v id=%v", err, *org, repo, sha, id)
+			log.Printf("fn=shasHandler err=%v org=%v repo=%v sha=%v id=%v", err, org, repo, sha, id)
 			return
 		}
 
-		log.Printf("fn=shasHandler org=%v repo=%v sha=%v id=%v\n", *org, repo, sha, id)
+		log.Printf("fn=shasHandler org=%v repo=%v sha=%v id=%v\n", org, repo, sha, id)
 
 		update(id,
 			result.Commit.Author.Email,
@@ -227,7 +226,7 @@ func shasHandler(repo, sha, id string) handler {
 }
 
 func shasUrl(repo, sha string) string {
-	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", *org, repo, sha)
+	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
 }
 
 func shas(repo, sha, id string) {
@@ -241,13 +240,13 @@ func commitsHandler(repo string) handler {
 			Sha string
 		}
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=commitsHandler err=%v org=%v repo=%v\n", err, *org, repo)
+			log.Printf("fn=commitsHandler err=%v org=%v repo=%v\n", err, org, repo)
 			return
 		}
 
 		// walk through shas, adding them to db if not present
 		for _, c := range result {
-			log.Printf("fn=commitsHandler org=%v repo=%v sha=%v\n", *org, repo, c.Sha)
+			log.Printf("fn=commitsHandler org=%v repo=%v sha=%v\n", org, repo, c.Sha)
 			findOrCreate(repo, c.Sha)
 		}
 	}
@@ -266,7 +265,7 @@ func commitsUrlFormat() (url string) {
 }
 
 func commitsUrl(repo string) string {
-	return fmt.Sprintf(commitsUrlFormat(), *org, repo)
+	return fmt.Sprintf(commitsUrlFormat(), org, repo)
 }
 
 // list commits
@@ -301,13 +300,13 @@ func reposHandler(c chan<- func()) handler {
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=reposHandler err=%v org=%v\n", err, *org)
+			log.Printf("fn=reposHandler err=%v org=%v\n", err, org)
 			return
 		}
 
 		// walk through repos, if not ignored add to worker
 		for _, r := range result {
-			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", *org, r.Name, r.Pushed_at)
+			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", org, r.Name, r.Pushed_at)
 			if !ignores[r.Name] && pushedCheck(r.Pushed_at) {
 				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
 			}
@@ -316,7 +315,7 @@ func reposHandler(c chan<- func()) handler {
 }
 
 func reposUrl() string {
-	return fmt.Sprintf("https://api.github.com/orgs/%s/repos", *org)
+	return fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
 }
 
 // list repos
@@ -358,10 +357,6 @@ func main() {
 	flag.Parse()
 
 	if *inserter {
-		// globals
-		ignores = makeIgnored(*ignore)
-		next = timeNow()
-
 		// setup worker pool and walk repos
 		c := make(chan func())
 		workers(c)
