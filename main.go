@@ -26,7 +26,7 @@ var (
 	loop     = flag.Bool("loop", false, "Loop Worker")
 	limit    = flag.Int("limit", 1000, "Query Limit")
 	scale    = flag.Int("scale", 5, "Number of Workers")
-	delay    = flag.Int("delay", 60, "Delay")
+	delay    = flag.Int("delay", 15, "Delay")
 	since    = flag.String("since", "", "Since Timestamp")
 	until    = flag.String("until", "", "Until Timestamp")
 	org      = mustGetenv("ORG")
@@ -66,15 +66,10 @@ func rateLimit(hdr http.Header) bool {
 		log.Fatal(err)
 	}
 
-	log.Printf("fn=rateLimit remaining=%v", remaining)
+	log.Printf("fn=rateLimit remaining=%v reset=%v", remaining, time.Unix(int64(reset), 0))
 	if remaining == 0 {
-		resetAt := time.Unix(int64(reset), 0)
-		sleep := resetAt.Sub(time.Now())
-		log.Printf("fn=rateLimit reset=%v sleep=%v\n", resetAt, sleep)
-		if sleep > 0 {
-			time.Sleep(sleep)
-			return true
-		}
+		time.Sleep(time.Duration(*delay) * time.Second)
+		return true
 	}
 
 	return false
