@@ -113,8 +113,8 @@ func request(url string, h handler) string {
 
 	if resp.StatusCode != 200 {
 		body, _ := ioutil.ReadAll(resp.Body)
-		log.Fatalf("url=%v StatusCode=%v Body=%q", url, resp.StatusCode, body)
-		return ""
+		log.Printf("url=%v StatusCode=%v Body=%q", url, resp.StatusCode, body)
+		return nextUrl(resp.Header)
 	}
 
 	h(resp.Body)
