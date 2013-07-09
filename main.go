@@ -99,7 +99,7 @@ func rateLimitCheck() bool {
 	return rateLimit(resp.Header)
 }
 
-// requests for repos, commits, and shas
+// requests for repos, commits, and shas; returned url controls iteration
 func request(url string, h handler) string {
 	if rateLimitCheck() {
 		return url
@@ -118,10 +118,12 @@ func request(url string, h handler) string {
 	}
 	defer resp.Body.Close()
 
+	// yes, check rate limit headers again
 	if rateLimit(resp.Header) {
 		return url
 	}
 
+	// 409 - empty repository
 	if resp.StatusCode != 200 {
 		body, _ := ioutil.ReadAll(resp.Body)
 		log.Printf("url=%v StatusCode=%v Body=%q\n", url, resp.StatusCode, body)
@@ -133,12 +135,14 @@ func request(url string, h handler) string {
 	return nextUrl(resp.Header)
 }
 
+// loop requests based on returned url
 func requests(url string, h handler) {
 	for url != "" {
 		url = request(url, h)
 	}
 }
 
+// find shas the need metadata
 func query(c chan<- func()) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, *limit)
 	if err != nil {
@@ -153,18 +157,20 @@ func query(c chan<- func()) {
 			log.Fatal(err)
 		}
 
+		// closure to lookup sha
 		c <- func(repo, sha, id string) func() { return func() { shas(repo, sha, id) } }(repo, sha, id)
-
 		more = true
 	}
 
 	if more {
+		// found something... look for more
 		c <- func() { query(c) }
 	} else {
 		log.Println("fn=query at=done")
-		time.Sleep(time.Duration(*delay) * time.Second)
 
+		// delay before looping, or close worker channel
 		if *loop {
+			time.Sleep(time.Duration(*delay) * time.Second)
 			c <- func() { query(c) }
 		} else {
 			close(c)
@@ -172,6 +178,7 @@ func query(c chan<- func()) {
 	}
 }
 
+// check if sha already there, or insert it
 func findOrCreate(repo, sha string) {
 	rows, err := db.Query("SELECT id FROM commits WHERE org=$1 AND repo=$2 AND sha=$3", org, repo, sha)
 	if err != nil {
@@ -188,14 +195,17 @@ func findOrCreate(repo, sha string) {
 	}
 }
 
+// add metadata to sha
 func update(id, email, date, message string, additions, deletions, total int) {
 	if _, err := db.Exec("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// shas request processing
 func shasHandler(repo, sha, id string) handler {
 	return func(rc io.Reader) {
+		// http://developer.github.com/v3/repos/commits/#get-a-single-commit
 		var result struct {
 			Commit struct {
 				Message string
@@ -227,10 +237,12 @@ func shasHandler(repo, sha, id string) handler {
 	}
 }
 
+// http://developer.github.com/v3/repos/commits/#get-a-single-commit
 func shasUrl(repo, sha string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
 }
 
+// list sha
 func shas(repo, sha, id string) {
 	requests(shasUrl(repo, sha), shasHandler(repo, sha, id))
 }
@@ -238,6 +250,7 @@ func shas(repo, sha, id string) {
 // commits request processing
 func commitsHandler(repo string) handler {
 	return func(rc io.Reader) {
+		// http://developer.github.com/v3/repos/commits/#list-commits-on-a-repository
 		var result []struct {
 			Sha string
 		}
@@ -254,6 +267,8 @@ func commitsHandler(repo string) handler {
 	}
 }
 
+// bake in since and until values
+// http://developer.github.com/v3/repos/commits/#list-commits-on-a-repository
 func commitsUrlFormat() (url string) {
 	url = "https://api.github.com/repos/%s/%s/commits?"
 	if *since != "" {
@@ -275,15 +290,18 @@ func commits(repo string) {
 	requests(commitsUrl(repo), commitsHandler(repo))
 }
 
-func pushedCheck(pushed string) bool {
+// use repo pushed_at to filter
+func pushedOk(pushed string) bool {
 	pushedBytes := bytes.NewBufferString(pushed).Bytes()
 	if now != "" {
+		// repo hasn't changed since last loop
 		nowBytes := bytes.NewBufferString(now).Bytes()
 		if bytes.Compare(nowBytes, pushedBytes) == 1 {
 			return false
 		}
 	}
 	if *since != "" {
+		// repo hasn't changed since since
 		sinceBytes := bytes.NewBufferString(*since).Bytes()
 		if bytes.Compare(sinceBytes, pushedBytes) == 1 {
 			return false
@@ -296,6 +314,7 @@ func pushedCheck(pushed string) bool {
 // repos request processing
 func reposHandler(c chan<- func()) handler {
 	return func(rc io.Reader) {
+		// http://developer.github.com/v3/repos/#list-organization-repositories
 		var result []struct {
 			Name      string
 			Pushed_at string
@@ -309,13 +328,14 @@ func reposHandler(c chan<- func()) handler {
 		// walk through repos, if not ignored add to worker
 		for _, r := range result {
 			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", org, r.Name, r.Pushed_at)
-			if !ignores[r.Name] && pushedCheck(r.Pushed_at) {
+			if !ignores[r.Name] && pushedOk(r.Pushed_at) {
 				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
 			}
 		}
 	}
 }
 
+// http://developer.github.com/v3/repos/#list-organization-repositories
 func reposUrl() string {
 	return fmt.Sprintf("https://api.github.com/orgs/%s/repos", org)
 }
@@ -326,9 +346,11 @@ func repos(c chan<- func()) {
 	requests(reposUrl(), reposHandler(c))
 
 	log.Println("fn=repos at=done")
-	time.Sleep(time.Duration(*delay) * time.Second)
 
+	// delay before looping, or close worker channel
+	// and update now, next times for filtering repos
 	if *loop {
+		time.Sleep(time.Duration(*delay) * time.Second)
 		now, next = next, time.Now().Format(iso8601)
 		c <- func() { repos(c) }
 	} else {
