@@ -34,6 +34,10 @@ var (
 	auth     = "token " + mustGetenv("GITHUB_OAUTH_TOKEN")
 	db       = dbOpen(mustGetenv("DATABASE_URL"))
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
+	now      string
+	next     string
+	ignores  map[string]bool
+	wg       sync.WaitGroup
 )
 
 type handler func(io.Reader)
@@ -265,10 +269,16 @@ func commits(repo string) {
 	requests(commitsUrl(repo), commitsHandler(repo))
 }
 
-func dateCheck(pushed string) bool {
+func pushedCheck(pushed string) bool {
+	pushedBytes := bytes.NewBufferString(pushed).Bytes()
+	if now != "" {
+		nowBytes := bytes.NewBufferString(now).Bytes()
+		if bytes.Compare(nowBytes, pushedBytes) == 1 {
+			return false
+		}
+	}
 	if *since != "" {
 		sinceBytes := bytes.NewBufferString(*since).Bytes()
-		pushedBytes := bytes.NewBufferString(pushed).Bytes()
 		if bytes.Compare(sinceBytes, pushedBytes) == 1 {
 			return false
 		}
@@ -278,11 +288,11 @@ func dateCheck(pushed string) bool {
 }
 
 // repos request processing
-func reposHandler(c chan<- func(), ignored map[string]bool) handler {
+func reposHandler(c chan<- func()) handler {
 	return func(rc io.Reader) {
 		var result []struct {
-			Name       string
-			Pushed_at  string
+			Name      string
+			Pushed_at string
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
@@ -293,7 +303,7 @@ func reposHandler(c chan<- func(), ignored map[string]bool) handler {
 		// walk through repos, if not ignored add to worker
 		for _, r := range result {
 			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", *org, r.Name, r.Pushed_at)
-			if !ignored[r.Name] && dateCheck(r.Pushed_at) {
+			if !ignores[r.Name] && pushedCheck(r.Pushed_at) {
 				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
 			}
 		}
@@ -305,21 +315,23 @@ func reposUrl() string {
 }
 
 // list repos
-func repos(c chan<- func(), ignored map[string]bool) {
-	requests(reposUrl(), reposHandler(c, ignored))
+func repos(c chan<- func()) {
+	log.Printf("fn=repos now=%v next=%v", now, next)
+	requests(reposUrl(), reposHandler(c))
 
 	log.Println("fn=repos at=done")
 	time.Sleep(time.Duration(*delay) * time.Second)
 
 	if *loop {
-		c <- func() { repos(c, ignored) }
+		now, next = next, timeNow()
+		c <- func() { repos(c) }
 	} else {
 		close(c)
 	}
 }
 
 // worker loops on func's to call
-func worker(wg *sync.WaitGroup, c <-chan func()) {
+func worker(c <-chan func()) {
 	defer wg.Done()
 	for f := range c {
 		f()
@@ -327,10 +339,10 @@ func worker(wg *sync.WaitGroup, c <-chan func()) {
 }
 
 // setup channel and workers
-func workers(wg *sync.WaitGroup, c <-chan func()) {
+func workers(c <-chan func()) {
 	wg.Add(*scale)
 	for i := 0; i < *scale; i++ {
-		go worker(wg, c)
+		go worker(c)
 	}
 }
 
@@ -340,19 +352,23 @@ func main() {
 
 	flag.Parse()
 
-	var wg sync.WaitGroup
 	if *inserter {
+		// globals
+		ignores = makeIgnored(*ignore)
+		next = timeNow()
+
 		// setup worker pool and walk repos
 		c := make(chan func())
-		workers(&wg, c)
-		c <- func() { repos(c, makeIgnored(*ignore)) }
+		workers(c)
+		c <- func() { repos(c) }
 	}
 	if *updater {
 		// setup worker pool and walk db
 		c := make(chan func())
-		workers(&wg, c)
+		workers(c)
 		c <- func() { query(c) }
 	}
+
 	wg.Wait()
 }
 
@@ -385,4 +401,8 @@ func mustGetenv(key string) (value string) {
 	}
 
 	return
+}
+
+func timeNow() string {
+	return time.Now().Format("2006-01-02T15:04:05Z")
 }
