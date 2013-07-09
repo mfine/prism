@@ -19,7 +19,6 @@ import (
 	"time"
 )
 
-// 2012-08-22T04:40:05Z
 var (
 	inserter = flag.Bool("inserter", false, "Insert Worker")
 	updater  = flag.Bool("updater", false, "Update Worker")
@@ -34,9 +33,13 @@ var (
 	auth     = "token " + mustGetenv("OAUTH_TOKEN")
 	db       = dbOpen(mustGetenv("DATABASE_URL"))
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
-	next     = timeNow()
+	next     = time.Now().Format(iso8601)
 	now      string
 	wg       sync.WaitGroup
+)
+
+const (
+	iso8601 = "2006-01-02T15:04:05Z"
 )
 
 type handler func(io.Reader)
@@ -66,8 +69,10 @@ func rateLimit(hdr http.Header) bool {
 		log.Fatal(err)
 	}
 
-	log.Printf("fn=rateLimit remaining=%v reset=%v", remaining, time.Unix(int64(reset), 0))
+	log.Printf("fn=rateLimit remaining=%v\n", remaining)
 	if remaining == 0 {
+		resetAt := time.Unix(int64(reset), 0)
+		log.Printf("fn=rateLimit reset=%v wait=%v\n", resetAt.Format(iso8601), resetAt.Sub(time.Now()))
 		time.Sleep(time.Duration(*delay) * time.Second)
 		return true
 	}
@@ -322,7 +327,7 @@ func repos(c chan<- func()) {
 	time.Sleep(time.Duration(*delay) * time.Second)
 
 	if *loop {
-		now, next = next, timeNow()
+		now, next = next, time.Now().Format(iso8601)
 		c <- func() { repos(c) }
 	} else {
 		close(c)
@@ -396,8 +401,4 @@ func mustGetenv(key string) (value string) {
 	}
 
 	return
-}
-
-func timeNow() string {
-	return time.Now().Format("2006-01-02T15:04:05Z")
 }
