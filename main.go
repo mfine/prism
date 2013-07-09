@@ -41,6 +41,8 @@ var (
 
 type handler func(io.Reader)
 
+// get the next url from the link headers
+// http://developer.github.com/v3/#pagination
 func nextUrl(hdr http.Header) string {
 	for _, link := range hdr["Link"] {
 		urls := strings.Split(link, ",")
@@ -55,6 +57,8 @@ func nextUrl(hdr http.Header) string {
 	return ""
 }
 
+// check rate limiting headers
+// http://developer.github.com/v3/#rate-limiting
 func rateLimit(hdr http.Header) bool {
 	remaining, err := strconv.Atoi(hdr["X-Ratelimit-Remaining"][0])
 	if err != nil {
@@ -70,6 +74,7 @@ func rateLimit(hdr http.Header) bool {
 	if remaining == 0 {
 		resetAt := time.Unix(int64(reset), 0)
 		log.Printf("fn=rateLimit reset=%v wait=%v\n", resetAt.Format(iso8601), resetAt.Sub(time.Now()))
+		// use delay... don't sleep for wait, as remaining can stay 0 during reset update :(
 		time.Sleep(time.Duration(*delay) * time.Second)
 		return true
 	}
@@ -77,7 +82,8 @@ func rateLimit(hdr http.Header) bool {
 	return false
 }
 
-func rateCheck() bool {
+// check rate limit
+func rateLimitCheck() bool {
 	req, err := http.NewRequest("GET", "https://api.github.com/rate_limit", nil)
 	if err != nil {
 		log.Fatal(err)
@@ -93,13 +99,13 @@ func rateCheck() bool {
 	return rateLimit(resp.Header)
 }
 
+// requests for repos, commits, and shas
 func request(url string, h handler) string {
-	if rateCheck() {
+	if rateLimitCheck() {
 		return url
 	}
 
 	log.Printf("fn=request url=%q\n", url)
-
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -118,7 +124,7 @@ func request(url string, h handler) string {
 
 	if resp.StatusCode != 200 {
 		body, _ := ioutil.ReadAll(resp.Body)
-		log.Printf("url=%v StatusCode=%v Body=%q", url, resp.StatusCode, body)
+		log.Printf("url=%v StatusCode=%v Body=%q\n", url, resp.StatusCode, body)
 		return nextUrl(resp.Header)
 	}
 
@@ -206,12 +212,11 @@ func shasHandler(repo, sha, id string) handler {
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=shasHandler err=%v org=%v repo=%v sha=%v id=%v", err, org, repo, sha, id)
+			log.Printf("fn=shasHandler err=%v org=%v repo=%v sha=%v id=%v\n", err, org, repo, sha, id)
 			return
 		}
 
 		log.Printf("fn=shasHandler org=%v repo=%v sha=%v id=%v\n", org, repo, sha, id)
-
 		update(id,
 			result.Commit.Author.Email,
 			result.Commit.Author.Date,
@@ -317,7 +322,7 @@ func reposUrl() string {
 
 // list repos
 func repos(c chan<- func()) {
-	log.Printf("fn=repos now=%v next=%v", now, next)
+	log.Printf("fn=repos now=%v next=%v\n", now, next)
 	requests(reposUrl(), reposHandler(c))
 
 	log.Println("fn=repos at=done")
