@@ -252,7 +252,7 @@ func commitsUrlFormat() (url string) {
 }
 
 func commitsUrl(repo string) string {
-	return fmt.Sprintf(commitsUrlFormat(), *org, repo)
+	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", *org, repo)
 }
 
 // list commits
