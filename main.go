@@ -302,20 +302,17 @@ func repos(c chan<- func(), ignored map[string]bool) {
 // worker loops on func's to call
 func worker(wg *sync.WaitGroup, c <-chan func()) {
 	defer wg.Done()
-	for w := range c {
-		w()
+	for f := range c {
+		f()
 	}
 }
 
 // setup channel and workers
-func workers(wg *sync.WaitGroup) (c chan func()) {
-	c = make(chan func())
+func workers(wg *sync.WaitGroup, c <-chan func()) {
 	wg.Add(*scale)
 	for i := 0; i < *scale; i++ {
 		go worker(wg, c)
 	}
-
-	return
 }
 
 func main() {
@@ -327,12 +324,14 @@ func main() {
 	var wg sync.WaitGroup
 	if *inserter {
 		// setup worker pool and walk repos
-		c := workers(&wg)
+		c := make(chan func())
+		workers(&wg, c)
 		c <- func() { repos(c, makeIgnored(*ignore)) }
 	}
 	if *updater {
 		// setup worker pool and walk db
-		c := workers(&wg)
+		c := make(chan func())
+		workers(&wg, c)
 		c <- func() { query(c) }
 	}
 	wg.Wait()
