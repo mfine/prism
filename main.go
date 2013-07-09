@@ -33,13 +33,10 @@ var (
 	auth     = "token " + mustGetenv("OAUTH_TOKEN")
 	db       = dbOpen(mustGetenv("DATABASE_URL"))
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
+	iso8601  = "2006-01-02T15:04:05Z"
 	next     = time.Now().Format(iso8601)
 	now      string
 	wg       sync.WaitGroup
-)
-
-const (
-	iso8601 = "2006-01-02T15:04:05Z"
 )
 
 type handler func(io.Reader)
