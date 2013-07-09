@@ -150,6 +150,7 @@ func query(c chan<- func()) {
 	if more {
 		c <- func() { query(c) }
 	} else {
+		log.Println("fn=query done")
 		time.Sleep(time.Duration(*delay) * time.Second)
 
 		if *loop {
@@ -307,6 +308,7 @@ func reposUrl() string {
 func repos(c chan<- func(), ignored map[string]bool) {
 	requests(reposUrl(), reposHandler(c, ignored))
 
+	log.Println("fn=repos done")
 	time.Sleep(time.Duration(*delay) * time.Second)
 
 	if *loop {
