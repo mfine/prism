@@ -264,18 +264,11 @@ func commits(repo string) {
 	requests(commitsUrl(repo), commitsHandler(repo))
 }
 
-func dateCheck(created, pushed string) bool {
+func dateCheck(pushed string) bool {
 	if *since != "" {
 		sinceBytes := bytes.NewBufferString(*since).Bytes()
 		pushedBytes := bytes.NewBufferString(pushed).Bytes()
 		if bytes.Compare(sinceBytes, pushedBytes) == 1 {
-			return false
-		}
-	}
-	if *until != "" {
-		createdBytes := bytes.NewBufferString(created).Bytes()
-		untilBytes := bytes.NewBufferString(*until).Bytes()
-		if bytes.Compare(createdBytes, untilBytes) == 1 {
 			return false
 		}
 	}
@@ -288,7 +281,6 @@ func reposHandler(c chan<- func(), ignored map[string]bool) handler {
 	return func(rc io.Reader) {
 		var result []struct {
 			Name       string
-			Created_at string
 			Pushed_at  string
 		}
 
@@ -299,8 +291,8 @@ func reposHandler(c chan<- func(), ignored map[string]bool) handler {
 
 		// walk through repos, if not ignored add to worker
 		for _, r := range result {
-			log.Printf("fn=reposHandler org=%v repo=%v created=%q pushed=%q\n", *org, r.Name, r.Created_at, r.Pushed_at)
-			if !ignored[r.Name] && dateCheck(r.Created_at, r.Pushed_at) {
+			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", *org, r.Name, r.Pushed_at)
+			if !ignored[r.Name] && dateCheck(r.Pushed_at) {
 				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
 			}
 		}
