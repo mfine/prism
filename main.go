@@ -150,7 +150,7 @@ func query(c chan<- func()) {
 	if more {
 		c <- func() { query(c) }
 	} else {
-		log.Println("fn=query done")
+		log.Println("fn=query at=done")
 		time.Sleep(time.Duration(*delay) * time.Second)
 
 		if *loop {
@@ -257,7 +257,7 @@ func commitsUrlFormat() (url string) {
 }
 
 func commitsUrl(repo string) string {
-	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits", *org, repo)
+	return fmt.Sprintf(commitsUrlFormat(), *org, repo)
 }
 
 // list commits
@@ -308,7 +308,7 @@ func reposUrl() string {
 func repos(c chan<- func(), ignored map[string]bool) {
 	requests(reposUrl(), reposHandler(c, ignored))
 
-	log.Println("fn=repos done")
+	log.Println("fn=repos at=done")
 	time.Sleep(time.Duration(*delay) * time.Second)
 
 	if *loop {
