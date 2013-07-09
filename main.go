@@ -92,7 +92,6 @@ func request(url string, h handler) string {
 		return url
 	}
 
-	log.Println(url)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatal(err)
