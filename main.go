@@ -67,10 +67,15 @@ func rateLimit(hdr http.Header) bool {
 		log.Fatal(err)
 	}
 
+	log.Printf("fn=rateLimit remaining=%v", remaining)
 	if remaining == 0 {
-		log.Printf("fn=rateLimit reset=%v\n", time.Unix(int64(reset), 0))
-		time.Sleep(time.Unix(int64(reset), 0).Sub(time.Now()))
-		return true
+		resetAt := time.Unix(int64(reset), 0)
+		sleep := resetAt.Sub(time.Now())
+		log.Printf("fn=rateLimit reset=%v sleep=%v\n", resetAt, sleep)
+		if sleep > 0 {
+			time.Sleep(sleep)
+			return true
+		}
 	}
 
 	return false
