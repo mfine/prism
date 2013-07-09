@@ -139,7 +139,7 @@ func query(c chan<- func()) {
 			log.Fatal(err)
 		}
 
-		c <- func() { shas(repo, sha, id) }
+		c <- func(repo, sha, id string) func() { return func() { shas(repo, sha, id) } }(repo, sha, id)
 
 		more = true
 	}
@@ -277,7 +277,7 @@ func reposHandler(c chan<- func(), ignored map[string]bool) handler {
 		for _, r := range result {
 			log.Printf("fn=reposHandler org=%v repo=%v\n", *org, r.Name)
 			if !ignored[r.Name] {
-				c <- func() { commits(r.Name) }
+				c <- func(repo string) func() { return func() { commits(r.Name) } }(r.Name)
 			}
 		}
 	}
