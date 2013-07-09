@@ -277,7 +277,7 @@ func reposHandler(c chan<- func(), ignored map[string]bool) handler {
 		for _, r := range result {
 			log.Printf("fn=reposHandler org=%v repo=%v\n", *org, r.Name)
 			if !ignored[r.Name] {
-				c <- func(repo string) func() { return func() { commits(r.Name) } }(r.Name)
+				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
 			}
 		}
 	}
