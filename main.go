@@ -29,7 +29,7 @@ var (
 	since    = flag.String("since", "", "Since Timestamp")
 	until    = flag.String("until", "", "Until Timestamp")
 	org      = mustGetenv("ORG")
-	ignores  = makeIgnored(mustGetenv("IGNORE_REPOS"))
+	ignores  = makeIgnored(os.Getenv("IGNORE_REPOS"))
 	auth     = "token " + mustGetenv("OAUTH_TOKEN")
 	db       = dbOpen(mustGetenv("DATABASE_URL"))
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
@@ -100,7 +100,7 @@ func rateLimitCheck() bool {
 }
 
 // requests for repos, commits, and shas; returned url controls iteration
-func request(url string, h handler) string {
+func request(url string, h handler, etags map[string]string) string {
 	if rateLimitCheck() {
 		return url
 	}
@@ -111,6 +111,12 @@ func request(url string, h handler) string {
 		log.Fatal(err)
 	}
 	req.Header.Set("Authorization", auth)
+
+	if etags != nil {
+		if etag := etags[url]; etag != "" {
+			req.Header.Set("If-None-Match", etag)
+		}
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -125,9 +131,16 @@ func request(url string, h handler) string {
 
 	// 409 - empty repository
 	if resp.StatusCode != 200 {
-		body, _ := ioutil.ReadAll(resp.Body)
-		log.Printf("url=%v StatusCode=%v Body=%q\n", url, resp.StatusCode, body)
+		if resp.StatusCode != 304 {
+			body, _ := ioutil.ReadAll(resp.Body)
+			log.Printf("url=%v StatusCode=%v Body=%q\n", url, resp.StatusCode, body)
+		}
+
 		return nextUrl(resp.Header)
+	}
+
+	if etags != nil {
+		etags[url] = resp.Header["Etag"][0]
 	}
 
 	h(resp.Body)
@@ -136,9 +149,9 @@ func request(url string, h handler) string {
 }
 
 // loop requests based on returned url
-func requests(url string, h handler) {
+func requests(url string, h handler, etags map[string]string) {
 	for url != "" {
-		url = request(url, h)
+		url = request(url, h, etags)
 	}
 }
 
@@ -244,7 +257,7 @@ func shasUrl(repo, sha string) string {
 
 // list sha
 func shas(repo, sha, id string) {
-	requests(shasUrl(repo, sha), shasHandler(repo, sha, id))
+	requests(shasUrl(repo, sha), shasHandler(repo, sha, id), nil)
 }
 
 // commits request processing
@@ -287,7 +300,7 @@ func commitsUrl(repo string) string {
 
 // list commits
 func commits(repo string) {
-	requests(commitsUrl(repo), commitsHandler(repo))
+	requests(commitsUrl(repo), commitsHandler(repo), nil)
 }
 
 // use repo pushed_at to filter
@@ -341,9 +354,9 @@ func reposUrl() string {
 }
 
 // list repos
-func repos(c chan<- func()) {
+func repos(c chan<- func(), etags map[string]string) {
 	log.Printf("fn=repos now=%v next=%v\n", now, next)
-	requests(reposUrl(), reposHandler(c))
+	requests(reposUrl(), reposHandler(c), etags)
 
 	log.Println("fn=repos at=done")
 
@@ -352,7 +365,7 @@ func repos(c chan<- func()) {
 	if *loop {
 		time.Sleep(time.Duration(*delay) * time.Second)
 		now, next = next, time.Now().Format(iso8601)
-		c <- func() { repos(c) }
+		c <- func() { repos(c, etags) }
 	} else {
 		close(c)
 	}
@@ -384,7 +397,7 @@ func main() {
 		// setup worker pool and walk repos
 		c := make(chan func())
 		workers(c)
-		c <- func() { repos(c) }
+		c <- func() { repos(c, make(map[string]string)) }
 	}
 	if *updater {
 		// setup worker pool and walk db
