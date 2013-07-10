@@ -395,9 +395,8 @@ func main() {
 	if *inserter {
 		// setup worker pool and walk repos
 		c := make(chan func())
-		etags := make(map[string]string)
 		workers(c)
-		c <- func() { repos(c, etags) }
+		c <- func() { repos(c, make(map[string]string)) }
 	}
 	if *updater {
 		// setup worker pool and walk db
