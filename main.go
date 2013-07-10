@@ -397,7 +397,7 @@ func main() {
 		// setup worker pool and walk repos
 		c := make(chan func())
 		workers(c)
-		c <- func() { repos(c, make(map[string]string)) }
+		c <- func() { repos(c, nil) }
 	}
 	if *updater {
 		// setup worker pool and walk db
