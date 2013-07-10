@@ -135,14 +135,15 @@ func request(url string, h handler, etags map[string]string) string {
 			body, _ := ioutil.ReadAll(resp.Body)
 			log.Printf("url=%v StatusCode=%v Body=%q\n", url, resp.StatusCode, body)
 		}
+
 		return nextUrl(resp.Header)
 	}
-
-	h(resp.Body)
 
 	if etags != nil {
 		etags[url] = resp.Header["Etag"][0]
 	}
+
+	h(resp.Body)
 
 	return nextUrl(resp.Header)
 }
