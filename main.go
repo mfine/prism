@@ -29,13 +29,12 @@ var (
 	since    = flag.String("since", "", "Since Timestamp")
 	until    = flag.String("until", "", "Until Timestamp")
 	org      = mustGetenv("ORG")
-	ignores  = makeIgnored(mustGetenv("IGNORE_REPOS"))
+	ignores  = makeIgnored(os.Getenv("IGNORE_REPOS"))
 	auth     = "token " + mustGetenv("OAUTH_TOKEN")
 	db       = dbOpen(mustGetenv("DATABASE_URL"))
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
 	iso8601  = "2006-01-02T15:04:05Z"
 	next     = time.Now().Format(iso8601)
-	etags    map[string]string
 	now      string
 	wg       sync.WaitGroup
 )
@@ -101,7 +100,7 @@ func rateLimitCheck() bool {
 }
 
 // requests for repos, commits, and shas; returned url controls iteration
-func request(url string, h handler) string {
+func request(url string, h handler, etags map[string]string) string {
 	if rateLimitCheck() {
 		return url
 	}
@@ -113,9 +112,10 @@ func request(url string, h handler) string {
 	}
 	req.Header.Set("Authorization", auth)
 
-	// NOT THREAD SAFE
-	if etag := etags[url]; etag != "" {
-		req.Header.Set("If-None-Match", fmt.Sprintf("\"%s\"", etag))
+	if etags != nil {
+		if etag := etags[url]; etag != "" {
+			req.Header.Set("If-None-Match", etag)
+		}
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -140,16 +140,17 @@ func request(url string, h handler) string {
 
 	h(resp.Body)
 
-	// NOT THREAD SAFE
-	etags[url] = resp.Header["ETag"][0]
+	if etags != nil {
+		etags[url] = resp.Header["Etag"][0]
+	}
 
 	return nextUrl(resp.Header)
 }
 
 // loop requests based on returned url
-func requests(url string, h handler) {
+func requests(url string, h handler, etags map[string]string) {
 	for url != "" {
-		url = request(url, h)
+		url = request(url, h, etags)
 	}
 }
 
@@ -255,7 +256,7 @@ func shasUrl(repo, sha string) string {
 
 // list sha
 func shas(repo, sha, id string) {
-	requests(shasUrl(repo, sha), shasHandler(repo, sha, id))
+	requests(shasUrl(repo, sha), shasHandler(repo, sha, id), nil)
 }
 
 // commits request processing
@@ -298,7 +299,7 @@ func commitsUrl(repo string) string {
 
 // list commits
 func commits(repo string) {
-	requests(commitsUrl(repo), commitsHandler(repo))
+	requests(commitsUrl(repo), commitsHandler(repo), nil)
 }
 
 // use repo pushed_at to filter
@@ -352,9 +353,9 @@ func reposUrl() string {
 }
 
 // list repos
-func repos(c chan<- func()) {
+func repos(c chan<- func(), etags map[string]string) {
 	log.Printf("fn=repos now=%v next=%v\n", now, next)
-	requests(reposUrl(), reposHandler(c))
+	requests(reposUrl(), reposHandler(c), etags)
 
 	log.Println("fn=repos at=done")
 
@@ -363,7 +364,7 @@ func repos(c chan<- func()) {
 	if *loop {
 		time.Sleep(time.Duration(*delay) * time.Second)
 		now, next = next, time.Now().Format(iso8601)
-		c <- func() { repos(c) }
+		c <- func() { repos(c, etags) }
 	} else {
 		close(c)
 	}
@@ -394,8 +395,9 @@ func main() {
 	if *inserter {
 		// setup worker pool and walk repos
 		c := make(chan func())
+		etags := make(map[string]string)
 		workers(c)
-		c <- func() { repos(c) }
+		c <- func() { repos(c, etags) }
 	}
 	if *updater {
 		// setup worker pool and walk db
