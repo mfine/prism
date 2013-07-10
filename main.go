@@ -35,6 +35,7 @@ var (
 	urlRe    = regexp.MustCompile("<(.*)>; rel=\"(.*)\"")
 	iso8601  = "2006-01-02T15:04:05Z"
 	next     = time.Now().Format(iso8601)
+	etags    map[string]string
 	now      string
 	wg       sync.WaitGroup
 )
@@ -112,6 +113,11 @@ func request(url string, h handler) string {
 	}
 	req.Header.Set("Authorization", auth)
 
+	// NOT THREAD SAFE
+	if etag := etags[url]; etag != "" {
+		req.Header.Set("If-None-Match", fmt.Sprintf("\"%s\"", etag))
+	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Fatal(err)
@@ -125,12 +131,17 @@ func request(url string, h handler) string {
 
 	// 409 - empty repository
 	if resp.StatusCode != 200 {
-		body, _ := ioutil.ReadAll(resp.Body)
-		log.Printf("url=%v StatusCode=%v Body=%q\n", url, resp.StatusCode, body)
+		if resp.StatusCode != 304 {
+			body, _ := ioutil.ReadAll(resp.Body)
+			log.Printf("url=%v StatusCode=%v Body=%q\n", url, resp.StatusCode, body)
+		}
 		return nextUrl(resp.Header)
 	}
 
 	h(resp.Body)
+
+	// NOT THREAD SAFE
+	etags[url] = resp.Header["ETag"][0]
 
 	return nextUrl(resp.Header)
 }
