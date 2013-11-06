@@ -155,7 +155,7 @@ func requests(url string, h handler, etags map[string]string) {
 	}
 }
 
-// find shas the need metadata
+// find shas that need metadata
 func query(c chan<- func()) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, *limit)
 	if err != nil {
@@ -172,6 +172,43 @@ func query(c chan<- func()) {
 
 		// closure to lookup sha
 		c <- func(id, repo, sha string) func() { return func() { shas(id, repo, sha) } }(id, repo, sha)
+		more = true
+	}
+
+	if more {
+		// found something... look for more
+		c <- func() { query(c) }
+	} else {
+		log.Println("fn=query at=done")
+
+		// delay before looping, or close worker channel
+		if *loop {
+			time.Sleep(time.Duration(*delay) * time.Second)
+			c <- func() { query(c) }
+		} else {
+			close(c)
+		}
+	}
+}
+
+// find prs that need metadata
+func queryPrs(c chan<- func()) {
+	rows, err := db.Query("SELECT id, repo, number FROM pulls WHERE org=$1 AND email IS NULL LIMIT $2", org, *limit)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	more := false
+	for rows.Next() {
+		var id, repo string
+		var number int
+		if err := rows.Scan(&id, &repo, &number); err != nil {
+			log.Fatal(err)
+		}
+
+		// closure to lookup pull
+		c <- func(id, repo string, number int) func() { return func() { prs(id, repo, number) } }(id, repo, number)
 		more = true
 	}
 
@@ -267,6 +304,35 @@ func shasHandler(id, repo, sha string) handler {
 	}
 }
 
+// prs request processing
+func prsHandler(id, repo string, number int) handler {
+	return func(rc io.Reader) {
+		// http://developer.github.com/v3/pulls/#get-a-single-pull-request
+		var result struct {
+			Title         string
+			Comments      int
+			Commits       int
+			Additions     int
+			Deletions     int
+			Changed_files int
+		}
+
+		if err := json.NewDecoder(rc).Decode(&result); err != nil {
+			log.Printf("fn=prsHandler err=%v org=%v repo=%v number=%v id=%v\n", err, org, repo, number, id)
+			return
+		}
+
+		log.Printf("fn=prsHandler org=%v repo=%v number=%v id=%v\n", org, repo, number, id)
+		updatePulls(id,
+			result.Title,
+			result.Comments,
+			result.Commits,
+			result.Additions,
+			result.Deletions,
+			result.Changed_files)
+	}
+}
+
 // http://developer.github.com/v3/repos/commits/#get-a-single-commit
 func shasUrl(repo, sha string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
@@ -275,6 +341,16 @@ func shasUrl(repo, sha string) string {
 // list sha
 func shas(id, repo, sha string) {
 	requests(shasUrl(repo, sha), shasHandler(id, repo, sha), nil)
+}
+
+// http://developer.github.com/v3/pulls/#get-a-single-pull-request
+func prsUrl(repo string, number int) string {
+	return fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%s", org, repo, number)
+}
+
+// list pr
+func prs(id, repo string, number int) {
+	requests(prsUrl(repo, number), prsHandler(id, repo, number), nil)
 }
 
 // commits request processing
