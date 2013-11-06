@@ -155,7 +155,7 @@ func requests(url string, h handler, etags map[string]string) {
 	}
 }
 
-// find shas the need metadata
+// find shas that need metadata
 func query(c chan<- func()) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, *limit)
 	if err != nil {
@@ -171,7 +171,44 @@ func query(c chan<- func()) {
 		}
 
 		// closure to lookup sha
-		c <- func(repo, sha, id string) func() { return func() { shas(repo, sha, id) } }(repo, sha, id)
+		c <- func(id, repo, sha string) func() { return func() { shas(id, repo, sha) } }(id, repo, sha)
+		more = true
+	}
+
+	if more {
+		// found something... look for more
+		c <- func() { query(c) }
+	} else {
+		log.Println("fn=query at=done")
+
+		// delay before looping, or close worker channel
+		if *loop {
+			time.Sleep(time.Duration(*delay) * time.Second)
+			c <- func() { query(c) }
+		} else {
+			close(c)
+		}
+	}
+}
+
+// find prs that need metadata
+func queryPrs(c chan<- func()) {
+	rows, err := db.Query("SELECT id, repo, number FROM pulls WHERE org=$1 AND email IS NULL LIMIT $2", org, *limit)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	more := false
+	for rows.Next() {
+		var id, repo string
+		var number int
+		if err := rows.Scan(&id, &repo, &number); err != nil {
+			log.Fatal(err)
+		}
+
+		// closure to lookup pull
+		c <- func(id, repo string, number int) func() { return func() { prs(id, repo, number) } }(id, repo, number)
 		more = true
 	}
 
@@ -208,6 +245,23 @@ func findOrCreate(repo, sha string) {
 	}
 }
 
+// check if pull already there, or insert it
+func findOrCreatePulls(repo string, number int) {
+	rows, err := db.Query("SELECT id FROM pulls WHERE org=$1 AND repo=$2 AND number=$3", org, repo, number)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		return
+	}
+
+	if _, err := db.Exec("INSERT INTO commits (org, repo, number) VALUES ($1, $2, $3)", org, repo, number); err != nil {
+		log.Fatal(err)
+	}
+}
+
 // add metadata to sha
 func update(id, email, date, message string, additions, deletions, total int) {
 	if _, err := db.Exec("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total); err != nil {
@@ -216,7 +270,7 @@ func update(id, email, date, message string, additions, deletions, total int) {
 }
 
 // shas request processing
-func shasHandler(repo, sha, id string) handler {
+func shasHandler(id, repo, sha string) handler {
 	return func(rc io.Reader) {
 		// http://developer.github.com/v3/repos/commits/#get-a-single-commit
 		var result struct {
@@ -250,14 +304,53 @@ func shasHandler(repo, sha, id string) handler {
 	}
 }
 
+// prs request processing
+func prsHandler(id, repo string, number int) handler {
+	return func(rc io.Reader) {
+		// http://developer.github.com/v3/pulls/#get-a-single-pull-request
+		var result struct {
+			Title         string
+			Comments      int
+			Commits       int
+			Additions     int
+			Deletions     int
+			Changed_files int
+		}
+
+		if err := json.NewDecoder(rc).Decode(&result); err != nil {
+			log.Printf("fn=prsHandler err=%v org=%v repo=%v number=%v id=%v\n", err, org, repo, number, id)
+			return
+		}
+
+		log.Printf("fn=prsHandler org=%v repo=%v number=%v id=%v\n", org, repo, number, id)
+		updatePulls(id,
+			result.Title,
+			result.Comments,
+			result.Commits,
+			result.Additions,
+			result.Deletions,
+			result.Changed_files)
+	}
+}
+
 // http://developer.github.com/v3/repos/commits/#get-a-single-commit
 func shasUrl(repo, sha string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
 }
 
 // list sha
-func shas(repo, sha, id string) {
-	requests(shasUrl(repo, sha), shasHandler(repo, sha, id), nil)
+func shas(id, repo, sha string) {
+	requests(shasUrl(repo, sha), shasHandler(id, repo, sha), nil)
+}
+
+// http://developer.github.com/v3/pulls/#get-a-single-pull-request
+func prsUrl(repo string, number int) string {
+	return fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%s", org, repo, number)
+}
+
+// list pr
+func prs(id, repo string, number int) {
+	requests(prsUrl(repo, number), prsHandler(id, repo, number), nil)
 }
 
 // commits request processing
@@ -303,6 +396,49 @@ func commits(repo string) {
 	requests(commitsUrl(repo), commitsHandler(repo), nil)
 }
 
+// pulls request processing
+func pullsHandler(repo string) handler {
+	return func(rc io.Reader) {
+		// http://developer.github.com/v3/pulls/#list-pull-requests
+		var result []struct {
+			Number int
+		}
+		if err := json.NewDecoder(rc).Decode(&result); err != nil {
+			log.Printf("fn=pullsHandler err=%v org=%v repo=%v\n", err, org, repo)
+			return
+		}
+
+		// walk through pulls, adding them to db if not present
+		for _, c := range result {
+			log.Printf("fn=pullsHandler org=%v repo=%v number=%v\n", org, repo, c.Number)
+			findOrCreatePulls(repo, c.Number)
+		}
+	}
+}
+
+// bake in since and until values
+// http://developer.github.com/v3/pulls/#list-pull-requests
+func pullsUrlFormat() (url string) {
+	url = "https://api.github.com/repos/%s/%s/pulls?state=closed&"
+	if *since != "" {
+		url += fmt.Sprintf("since=%s&", *since)
+	}
+	if *until != "" {
+		url += fmt.Sprintf("until=%s", *until)
+	}
+
+	return
+}
+
+func pullsUrl(repo string) string {
+	return fmt.Sprintf(pullsUrlFormat(), org, repo)
+}
+
+// list pulls
+func pulls(repo string) {
+	requests(pullsUrl(repo), pullsHandler(repo), nil)
+}
+
 // use repo pushed_at to filter
 func pushedOk(pushed string) bool {
 	pushedBytes := bytes.NewBufferString(pushed).Bytes()
@@ -343,6 +479,7 @@ func reposHandler(c chan<- func()) handler {
 			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", org, r.Name, r.Pushed_at)
 			if !ignores[r.Name] && pushedOk(r.Pushed_at) {
 				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
+				c <- func(repo string) func() { return func() { pulls(repo) } }(r.Name)
 			}
 		}
 	}
