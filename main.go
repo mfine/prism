@@ -208,6 +208,23 @@ func findOrCreate(repo, sha string) {
 	}
 }
 
+// check if pull already there, or insert it
+func findOrCreatePulls(repo string, number int) {
+	rows, err := db.Query("SELECT id FROM pulls WHERE org=$1 AND repo=$2 AND number=$3", org, repo, number)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		return
+	}
+
+	if _, err := db.Exec("INSERT INTO commits (org, repo, number) VALUES ($1, $2, $3)", org, repo, number); err != nil {
+		log.Fatal(err)
+	}
+}
+
 // add metadata to sha
 func update(id, email, date, message string, additions, deletions, total int) {
 	if _, err := db.Exec("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total); err != nil {
@@ -303,6 +320,49 @@ func commits(repo string) {
 	requests(commitsUrl(repo), commitsHandler(repo), nil)
 }
 
+// pulls request processing
+func pullsHandler(repo string) handler {
+	return func(rc io.Reader) {
+		// http://developer.github.com/v3/pulls/#list-pull-requests
+		var result []struct {
+			Number int
+		}
+		if err := json.NewDecoder(rc).Decode(&result); err != nil {
+			log.Printf("fn=pullsHandler err=%v org=%v repo=%v\n", err, org, repo)
+			return
+		}
+
+		// walk through pulls, adding them to db if not present
+		for _, c := range result {
+			log.Printf("fn=pullsHandler org=%v repo=%v number=%v\n", org, repo, c.Number)
+			findOrCreatePulls(repo, c.Number)
+		}
+	}
+}
+
+// bake in since and until values
+// http://developer.github.com/v3/pulls/#list-pull-requests
+func pullsUrlFormat() (url string) {
+	url = "https://api.github.com/repos/%s/%s/pulls?state=closed&"
+	if *since != "" {
+		url += fmt.Sprintf("since=%s&", *since)
+	}
+	if *until != "" {
+		url += fmt.Sprintf("until=%s", *until)
+	}
+
+	return
+}
+
+func pullsUrl(repo string) string {
+	return fmt.Sprintf(pullsUrlFormat(), org, repo)
+}
+
+// list pulls
+func pulls(repo string) {
+	requests(pullsUrl(repo), pullsHandler(repo), nil)
+}
+
 // use repo pushed_at to filter
 func pushedOk(pushed string) bool {
 	pushedBytes := bytes.NewBufferString(pushed).Bytes()
@@ -343,6 +403,7 @@ func reposHandler(c chan<- func()) handler {
 			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", org, r.Name, r.Pushed_at)
 			if !ignores[r.Name] && pushedOk(r.Pushed_at) {
 				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
+				c <- func(repo string) func() { return func() { pulls(repo) } }(r.Name)
 			}
 		}
 	}
