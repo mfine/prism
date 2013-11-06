@@ -171,7 +171,7 @@ func query(c chan<- func()) {
 		}
 
 		// closure to lookup sha
-		c <- func(repo, sha, id string) func() { return func() { shas(repo, sha, id) } }(repo, sha, id)
+		c <- func(id, repo, sha string) func() { return func() { shas(id, repo, sha) } }(id, repo, sha)
 		more = true
 	}
 
@@ -233,7 +233,7 @@ func update(id, email, date, message string, additions, deletions, total int) {
 }
 
 // shas request processing
-func shasHandler(repo, sha, id string) handler {
+func shasHandler(id, repo, sha string) handler {
 	return func(rc io.Reader) {
 		// http://developer.github.com/v3/repos/commits/#get-a-single-commit
 		var result struct {
@@ -273,8 +273,8 @@ func shasUrl(repo, sha string) string {
 }
 
 // list sha
-func shas(repo, sha, id string) {
-	requests(shasUrl(repo, sha), shasHandler(repo, sha, id), nil)
+func shas(id, repo, sha string) {
+	requests(shasUrl(repo, sha), shasHandler(id, repo, sha), nil)
 }
 
 // commits request processing
