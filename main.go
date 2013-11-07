@@ -179,7 +179,7 @@ func queryCommits(c chan<- func()) {
 		// found something... look for more
 		c <- func() { queryCommits(c) }
 	} else {
-		log.Println("fn=query at=done")
+		log.Println("fn=query_commits at=done")
 
 		// delay before looping, or close worker channel
 		if *loop {
@@ -213,6 +213,107 @@ func updateCommits(id, email, date, message string, additions, deletions, total 
 	if _, err := db.Exec("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// find pulls that need metadata
+func queryPulls(c chan<- func()) {
+	rows, err := db.Query("SELECT id, repo, number FROM pulls WHERE org=$1 AND commits IS NULL LIMIT $2", org, *limit)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	more := false
+	for rows.Next() {
+		var id, repo string
+		var number int
+		if err := rows.Scan(&id, &repo, &number); err != nil {
+			log.Fatal(err)
+		}
+
+		// closure to lookup number
+		c <- func(id, repo string, number int) func() { return func() { pull(id, repo, number) } }(id, repo, number)
+		more = true
+	}
+
+	if more {
+		// found something... look for more
+		c <- func() { queryPulls(c) }
+	} else {
+		log.Println("fn=query_pulls at=done")
+
+		// delay before looping, or close worker channel
+		if *loop {
+			time.Sleep(time.Duration(*delay) * time.Second)
+			c <- func() { queryPulls(c) }
+		} else {
+			close(c)
+		}
+	}
+}
+
+// check if pull already there, or insert it
+func findOrCreatePulls(repo string, number int) {
+	rows, err := db.Query("SELECT id FROM pulls WHERE org=$1 AND repo=$2 AND number=$3", org, repo, number)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		return
+	}
+
+	if _, err := db.Exec("INSERT INTO commits (org, repo, number) VALUES ($1, $2, $3)", org, repo, number); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// add metadata to pull
+func updatePulls(id, title string, comments, commits, additions, deletions, changed_files int) {
+	if _, err := db.Exec("UPDATE pulls SET title=$2, comments=$3, commits=$4, adds=$5, dels=$6, changed=$7 WHERE id=$1", id, title, comments, commits, additions, deletions, changed_files); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// shas request processing
+func pullHandler(id, repo string, number int) handler {
+	return func(rc io.Reader) {
+
+		// http://developer.github.com/v3/pulls/#get-a-single-pull-request
+		var result struct {
+			Title         string
+			Comments      int
+			Commits       int
+			Additions     int
+			Deletions     int
+			Changed_files int
+		}
+
+		if err := json.NewDecoder(rc).Decode(&result); err != nil {
+			log.Printf("fn=pullHandler err=%v org=%v repo=%v number=%v id=%v\n", err, org, repo, number, id)
+			return
+		}
+
+		log.Printf("fn=pullHandler org=%v repo=%v number=%v id=%v\n", org, repo, number, id)
+		updatePulls(id,
+			result.Title,
+			result.Comments,
+			result.Commits,
+			result.Additions,
+			result.Deletions,
+			result.Changed_files)
+	}
+}
+
+// http://developer.github.com/v3/pulls/#get-a-single-pull-request
+func pullUrl(repo string, number int) string {
+	return fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%s", org, repo, number)
+}
+
+// list pull
+func pull(id, repo string, number int) {
+	requests(pullUrl(repo, number), pullHandler(id, repo, number), nil)
 }
 
 // shas request processing
@@ -404,6 +505,8 @@ func main() {
 		c := make(chan func())
 		workers(c)
 		c <- func() { queryCommits(c) }
+		c <- func() { queryPulls(c) }
+
 	}
 
 	wg.Wait()
