@@ -404,6 +404,49 @@ func commits(repo string) {
 	requests(commitsUrl(repo), commitsHandler(repo), nil)
 }
 
+// pulls request processing
+func pullsHandler(repo string) handler {
+	return func(rc io.Reader) {
+		// http://developer.github.com/v3/pulls/#list-pull-requests
+		var result []struct {
+			Number int
+		}
+		if err := json.NewDecoder(rc).Decode(&result); err != nil {
+			log.Printf("fn=pullsHandler err=%v org=%v repo=%v\n", err, org, repo)
+			return
+		}
+
+		// walk through pulls, adding them to db if not present
+		for _, c := range result {
+			log.Printf("fn=pullsHandler org=%v repo=%v number=%v\n", org, repo, c.Number)
+			findOrCreatePulls(repo, c.Number)
+		}
+	}
+}
+
+// bake in since and until values
+// http://developer.github.com/v3/pulls/#list-pull-requests
+func pullsUrlFormat() (url string) {
+	url = "https://api.github.com/repos/%s/%s/pulls?state=closed&"
+	if *since != "" {
+		url += fmt.Sprintf("since=%s&", *since)
+	}
+	if *until != "" {
+		url += fmt.Sprintf("until=%s", *until)
+	}
+
+	return
+}
+
+func pullsUrl(repo string) string {
+	return fmt.Sprintf(pullsUrlFormat(), org, repo)
+}
+
+// list pulls
+func pulls(repo string) {
+	requests(pullsUrl(repo), pullsHandler(repo), nil)
+}
+
 // use repo pushed_at to filter
 func pushedOk(pushed string) bool {
 	pushedBytes := bytes.NewBufferString(pushed).Bytes()
