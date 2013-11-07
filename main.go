@@ -264,7 +264,7 @@ func findOrCreatePulls(repo string, number int) {
 		return
 	}
 
-	if _, err := db.Exec("INSERT INTO commits (org, repo, number) VALUES ($1, $2, $3)", org, repo, number); err != nil {
+	if _, err := db.Exec("INSERT INTO pulls (org, repo, number) VALUES ($1, $2, $3)", org, repo, number); err != nil {
 		log.Fatal(err)
 	}
 }
