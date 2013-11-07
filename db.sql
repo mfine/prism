@@ -25,6 +25,7 @@ CREATE TABLE pulls (
     org text NOT NULL,
     repo text NOT NULL,
     number integer NOT NULL,
+    title text,
     comments integer,
     commits integer,
     adds integer,

@@ -217,7 +217,7 @@ func updateCommits(id, email, date, message string, additions, deletions, total 
 
 // find pulls that need metadata
 func queryPulls(c chan<- func()) {
-	rows, err := db.Query("SELECT id, repo, number FROM pulls WHERE org=$1 AND commits IS NULL LIMIT $2", org, *limit)
+	rows, err := db.Query("SELECT id, repo, number FROM pulls WHERE org=$1 AND title IS NULL LIMIT $2", org, *limit)
 	if err != nil {
 		log.Fatal(err)
 	}
