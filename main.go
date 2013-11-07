@@ -444,6 +444,7 @@ func reposHandler(c chan<- func()) handler {
 			log.Printf("fn=reposHandler org=%v repo=%v pushed=%q\n", org, r.Name, r.Pushed_at)
 			if !ignores[r.Name] && pushedOk(r.Pushed_at) {
 				c <- func(repo string) func() { return func() { commits(repo) } }(r.Name)
+				c <- func(repo string) func() { return func() { pulls(repo) } }(r.Name)
 			}
 		}
 	}
