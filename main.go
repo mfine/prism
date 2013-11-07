@@ -156,7 +156,7 @@ func requests(url string, h handler, etags map[string]string) {
 }
 
 // find shas the need metadata
-func query(c chan<- func()) {
+func queryCommits(c chan<- func()) {
 	rows, err := db.Query("SELECT id, repo, sha FROM commits WHERE org=$1 AND email IS NULL LIMIT $2", org, *limit)
 	if err != nil {
 		log.Fatal(err)
@@ -177,14 +177,14 @@ func query(c chan<- func()) {
 
 	if more {
 		// found something... look for more
-		c <- func() { query(c) }
+		c <- func() { queryCommits(c) }
 	} else {
 		log.Println("fn=query at=done")
 
 		// delay before looping, or close worker channel
 		if *loop {
 			time.Sleep(time.Duration(*delay) * time.Second)
-			c <- func() { query(c) }
+			c <- func() { queryCommits(c) }
 		} else {
 			close(c)
 		}
@@ -192,7 +192,7 @@ func query(c chan<- func()) {
 }
 
 // check if sha already there, or insert it
-func findOrCreate(repo, sha string) {
+func findOrCreateCommits(repo, sha string) {
 	rows, err := db.Query("SELECT id FROM commits WHERE org=$1 AND repo=$2 AND sha=$3", org, repo, sha)
 	if err != nil {
 		log.Fatal(err)
@@ -209,7 +209,7 @@ func findOrCreate(repo, sha string) {
 }
 
 // add metadata to sha
-func update(id, email, date, message string, additions, deletions, total int) {
+func updateCommits(id, email, date, message string, additions, deletions, total int) {
 	if _, err := db.Exec("UPDATE commits SET email=$2, date=$3, msg=$4, adds=$5, dels=$6, total=$7 WHERE id=$1", id, email, date, message, additions, deletions, total); err != nil {
 		log.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func commitHandler(id, repo, sha string) handler {
 		}
 
 		log.Printf("fn=commitHandler org=%v repo=%v sha=%v id=%v\n", org, repo, sha, id)
-		update(id,
+		updateCommits(id,
 			result.Commit.Author.Email,
 			result.Commit.Author.Date,
 			result.Commit.Message,
@@ -275,7 +275,7 @@ func commitsHandler(repo string) handler {
 		// walk through shas, adding them to db if not present
 		for _, c := range result {
 			log.Printf("fn=commitsHandler org=%v repo=%v sha=%v\n", org, repo, c.Sha)
-			findOrCreate(repo, c.Sha)
+			findOrCreateCommits(repo, c.Sha)
 		}
 	}
 }
@@ -403,7 +403,7 @@ func main() {
 		// setup worker pool and walk db
 		c := make(chan func())
 		workers(c)
-		c <- func() { query(c) }
+		c <- func() { queryCommits(c) }
 	}
 
 	wg.Wait()
