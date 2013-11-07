@@ -308,7 +308,7 @@ func pullHandler(id, repo string, number int) handler {
 
 // http://developer.github.com/v3/pulls/#get-a-single-pull-request
 func pullUrl(repo string, number int) string {
-	return fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%s", org, repo, number)
+	return fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", org, repo, number)
 }
 
 // list pull
