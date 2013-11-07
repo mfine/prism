@@ -171,7 +171,7 @@ func query(c chan<- func()) {
 		}
 
 		// closure to lookup sha
-		c <- func(repo, sha, id string) func() { return func() { shas(repo, sha, id) } }(repo, sha, id)
+		c <- func(repo, sha, id string) func() { return func() { commit(repo, sha, id) } }(repo, sha, id)
 		more = true
 	}
 
@@ -216,7 +216,7 @@ func update(id, email, date, message string, additions, deletions, total int) {
 }
 
 // shas request processing
-func shasHandler(repo, sha, id string) handler {
+func commitHandler(repo, sha, id string) handler {
 	return func(rc io.Reader) {
 		// http://developer.github.com/v3/repos/commits/#get-a-single-commit
 		var result struct {
@@ -235,11 +235,11 @@ func shasHandler(repo, sha, id string) handler {
 		}
 
 		if err := json.NewDecoder(rc).Decode(&result); err != nil {
-			log.Printf("fn=shasHandler err=%v org=%v repo=%v sha=%v id=%v\n", err, org, repo, sha, id)
+			log.Printf("fn=commitHandler err=%v org=%v repo=%v sha=%v id=%v\n", err, org, repo, sha, id)
 			return
 		}
 
-		log.Printf("fn=shasHandler org=%v repo=%v sha=%v id=%v\n", org, repo, sha, id)
+		log.Printf("fn=commitHandler org=%v repo=%v sha=%v id=%v\n", org, repo, sha, id)
 		update(id,
 			result.Commit.Author.Email,
 			result.Commit.Author.Date,
@@ -251,13 +251,13 @@ func shasHandler(repo, sha, id string) handler {
 }
 
 // http://developer.github.com/v3/repos/commits/#get-a-single-commit
-func shasUrl(repo, sha string) string {
+func commitUrl(repo, sha string) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", org, repo, sha)
 }
 
 // list sha
-func shas(repo, sha, id string) {
-	requests(shasUrl(repo, sha), shasHandler(repo, sha, id), nil)
+func commit(repo, sha, id string) {
+	requests(commitUrl(repo, sha), commitHandler(repo, sha, id), nil)
 }
 
 // commits request processing
