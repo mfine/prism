@@ -7,3 +7,4 @@ insert12: prism --inserter                  --since 2012-01-01 --until 2013-01-0
 insert13: prism --inserter                  --since 2013-01-01 --until 2014-01-01
 main:     prism --inserter --updater --loop
 update:   prism            --updater --loop
+refresh:  prism --inserter --updater
