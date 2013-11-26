@@ -37,6 +37,7 @@ var (
 	next     = time.Now().Format(iso8601)
 	now      string
 	wg       sync.WaitGroup
+	pg       sync.WaitGroup
 )
 
 type handler func(io.Reader)
@@ -186,7 +187,7 @@ func queryCommits(c chan<- func()) {
 			time.Sleep(time.Duration(*delay) * time.Second)
 			c <- func() { queryCommits(c) }
 		} else {
-			close(c)
+			pg.Done()
 		}
 	}
 }
@@ -247,7 +248,7 @@ func queryPulls(c chan<- func()) {
 			time.Sleep(time.Duration(*delay) * time.Second)
 			c <- func() { queryPulls(c) }
 		} else {
-			close(c)
+			pg.Done()
 		}
 	}
 }
@@ -512,7 +513,7 @@ func repos(c chan<- func(), etags map[string]string) {
 		now, next = next, time.Now().Format(iso8601)
 		c <- func() { repos(c, etags) }
 	} else {
-		close(c)
+		pg.Done()
 	}
 }
 
@@ -538,21 +539,21 @@ func main() {
 
 	flag.Parse()
 
+	c := make(chan func())
+	workers(c)
+
 	if *inserter {
-		// setup worker pool and walk repos
-		c := make(chan func())
-		workers(c)
+		pg.Add(1)
 		c <- func() { repos(c, nil) }
 	}
 	if *updater {
-		// setup worker pool and walk db
-		c := make(chan func())
-		workers(c)
+		pg.Add(2)
 		c <- func() { queryCommits(c) }
 		c <- func() { queryPulls(c) }
-
 	}
 
+	pg.Wait()
+	close(c)
 	wg.Wait()
 }
 
